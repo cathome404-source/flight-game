@@ -12,6 +12,7 @@ import { terrainHeightAt } from './flight.js';
 import { createPost } from './post.js';
 import { createEffects } from './effects.js';
 import { createWeather } from './weather.js';
+import { createEnvMaps } from './envmap.js';
 
 const DEG = Math.PI / 180;
 
@@ -201,6 +202,11 @@ export function createRenderer(canvas, world) {
   const stars = makeStars();
   scene.add(stars);
   if (world && world.group) scene.add(world.group);
+
+  // R2-4b: CC0 sky environment (PMREM from the vendored equirect
+  // JPEGs in game/assets). Gives the PBR aircraft and gold rings real
+  // sky reflections; the map follows the clock in setTimeOfDay below.
+  const envMaps = createEnvMaps(renderer, scene);
 
   // --- Golden-hour lighting: low warm sun, sky bounce, soft fill.
   // Sun intensity 1.9 (was 1.7) and a dimmer ambient (0.22, was 0.28):
@@ -633,6 +639,10 @@ export function createRenderer(canvas, world) {
     if (world && typeof world.setNightFactor === 'function') {
       world.setNightFactor(nightFactor);
     }
+    // R2-4b: the environment map follows the clock and the storm —
+    // golden sunset by day, dusk after ~18:50, flat overcast while
+    // the boss storm is up. Lazy: each map loads once, on first use.
+    if (envMaps) envMaps.applyForTime(h, storm);
   }
 
   const api = {

@@ -193,6 +193,9 @@ function makeReliefTerrain(def) {
     })
   );
   mesh.position.y = 0;
+  // R2-4b: tagged so applySurfaceTextures can lay the CC0 grass
+  // texture over the vertex colours (map * vertex colour).
+  mesh.userData.surfaceTex = 'grass';
   return mesh;
 }
 
@@ -447,6 +450,9 @@ function makeIsland(def, rng, palmSpecs, bushSpecs) {
     lambert(PALETTE.sand)
   );
   beach.position.y = 0.5;
+  // R2-4b: CC0 sand texture goes on the beach rim (see
+  // applySurfaceTextures at the bottom of this file).
+  beach.userData.surfaceTex = 'sand';
   island.add(beach);
 
   // Wet-sand ring on the beach rim: a warmer, darker band where the
@@ -638,6 +644,8 @@ function makeRunway(rw) {
     lambert(PALETTE.asphalt)
   );
   strip.position.y = -0.5;
+  // R2-4b: CC0 worn-asphalt texture on the strip top.
+  strip.userData.surfaceTex = 'asphalt';
   runway.add(strip);
 
   // White centre dashes down the strip.
@@ -1744,5 +1752,52 @@ function shadowify(group) {
       return islands.find((island) => island.userData.name === name);
     },
   };
+  // R2-4b: lay the curated CC0 surface textures over the tagged
+  // meshes (terrain grass, beach sand, runway asphalt). Loads are
+  // async; a missing file leaves the flat colour in place, so the
+  // game never breaks on a texture failure.
+  applySurfaceTextures(group);
   return world;
+}
+
+// --- R2-4b: CC0 surface textures (Poly Haven, CC0 — see
+// game/assets/SOURCES.md). Vendored as 512x512 JPEGs (~40–60 KiB
+// each); the 1K originals are NOT in the repo. The map multiplies the
+// existing vertex/flat colour, so the palette stays the game's own
+// and the texture only adds grain. Repeats are tuned per surface:
+// the terrain UVs span the whole island, so grass tiles ~18x across
+// it; the beach cylinder and runway strip tile along their length.
+const SURFACE_TEXTURES = {
+  grass: { file: 'assets/grass.jpg', repeat: [18, 18] },
+  sand: { file: 'assets/sand.jpg', repeat: [6, 6] },
+  asphalt: { file: 'assets/asphalt.jpg', repeat: [10, 1] },
+};
+
+function applySurfaceTextures(group) {
+  const loader = new THREE.TextureLoader();
+  const tagged = [];
+  group.traverse((obj) => {
+    if (obj.isMesh && obj.userData.surfaceTex) tagged.push(obj);
+  });
+  if (!tagged.length) return;
+  for (const [key, spec] of Object.entries(SURFACE_TEXTURES)) {
+    loader.load(
+      spec.file,
+      (tex) => {
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(spec.repeat[0], spec.repeat[1]);
+        if ('encoding' in tex && THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
+        for (const mesh of tagged) {
+          if (mesh.userData.surfaceTex !== key) continue;
+          mesh.material.map = tex;
+          mesh.material.needsUpdate = true;
+        }
+      },
+      undefined,
+      () => {
+        // Texture failed to load: keep the flat colour, game unaffected.
+      }
+    );
+  }
 }
