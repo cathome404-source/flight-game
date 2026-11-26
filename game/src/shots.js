@@ -99,12 +99,22 @@ export function createShots(render, flight, world, missions) {
     } else if (name === 'landing') {
       // Final approach from the west, nose slightly down, throttle
       // back: the lit runway and the yellow touchdown zone ahead.
-      // Close enough (340 m out) that the asphalt strip reads clearly.
-      // Posed at 30 m (was 38 m) so the plane's shadow falls close
-      // enough to read in the frame instead of far down the beach.
+      // R4-4 retake: 150 m out from the touchdown-zone start (-290)
+      // and 36 m up, so the asphalt strip, the yellow zone and the
+      // lit threshold fill the frame instead of reading as a thin
+      // distant strip. Gear down for the shot (R4-2).
       startForShot(3, 'free');
-      pose(-560, 30, rw.z, -90, -3, 46, 0.35);
+      pose(-440, 36, rw.z, -90, -3, 46, 0.35);
+      flight.state.gearDown = true;
+      flight.state.gearDeploy = 1;
       render.setView('chase');
+      // Slight 3/4 rear orbit: straight chase hides the main wheels
+      // edge-on behind the wing, so the gear never reads. A small
+      // offset shows both main wheels as discs + the tail wheel
+      // while the runway stays in frame. (snap() below keeps it.)
+      if (render && typeof render.addLook === 'function') {
+        render.addLook(-70, -40);
+      }
     }
 
     // Teleporting the plane leaves the camera far behind: snap it to
