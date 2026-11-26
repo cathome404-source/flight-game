@@ -422,6 +422,10 @@ export function createRenderer(canvas, world) {
             Math.cos(by * 0.017 + t * 0.7) * 0.45;
         }
         posAttr.needsUpdate = true;
+        // Drive the sea shader's ripple time from the same clock, so
+        // the specular shimmer moves with the swell.
+        const seaShader = world.sea.userData.shader;
+        if (seaShader) seaShader.uniforms.uTime.value = t;
       }
 
       // Landing light: bright low over the runway, a dim glow elsewhere.

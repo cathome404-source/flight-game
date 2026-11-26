@@ -438,7 +438,9 @@ export function createFlight(world, aircraft, config) {
         : 0;
       if (aircraft) {
         if (aircraft.setThrottle) aircraft.setThrottle(state.throttle);
-        if (aircraft.update) aircraft.update(dt, { roll: stickRoll, pitch: stickPitch, flaps: flapDeploy });
+        // Yaw input is the bank itself: a coordinated turn carries the
+        // rudder with it, so the tail works visibly in every turn.
+        if (aircraft.update) aircraft.update(dt, { roll: stickRoll, pitch: stickPitch, flaps: flapDeploy, yaw: stickRoll });
       }
       flight.syncAircraft();
     },

@@ -541,6 +541,61 @@ function buildLayeredClouds(rng) {
   };
 }
 
+// The sun-glint streak: a long additive band on the sea, aligned with
+// the sun's azimuth, fading out at both ends and both edges. The
+// texture is drawn on a canvas — no image file needed.
+function makeGlintStreak() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  // Bright in the middle of the streak's length, fading to nothing at
+  // the horizon end and the camera end.
+  const along = ctx.createLinearGradient(0, 0, 512, 0);
+  along.addColorStop(0, 'rgba(255,255,255,0)');
+  along.addColorStop(0.25, 'rgba(255,255,255,0.85)');
+  along.addColorStop(0.6, 'rgba(255,255,255,1)');
+  along.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = along;
+  ctx.fillRect(0, 0, 512, 128);
+  // Narrow across the streak: bright spine, soft transparent edges.
+  ctx.globalCompositeOperation = 'destination-in';
+  const across = ctx.createLinearGradient(0, 0, 0, 128);
+  across.addColorStop(0, 'rgba(255,255,255,0)');
+  across.addColorStop(0.35, 'rgba(255,255,255,1)');
+  across.addColorStop(0.65, 'rgba(255,255,255,1)');
+  across.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = across;
+  ctx.fillRect(0, 0, 512, 128);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const geo = new THREE.PlaneGeometry(2600, 170);
+  geo.rotateX(-Math.PI / 2);
+  // Lay the streak's long axis along the sun azimuth: rotateY maps +X
+  // to (cos a, 0, -sin a), so a = atan2(-dirZ, dirX) lines it up.
+  const az = ((WORLD.sun.azimuth || 262) * Math.PI) / 180;
+  const dirX = Math.sin(az);
+  const dirZ = Math.cos(az);
+  geo.rotateY(Math.atan2(-dirZ, dirX));
+  const streak = new THREE.Mesh(
+    geo,
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      color: 0xffd9a0,
+      transparent: true,
+      opacity: 0.32,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  // Centred on the flight line (z = 330) so the cover/rings shots fly
+  // along it; just above the swell peaks (+1.0 m) so waves never hide it.
+  streak.position.set(-350, 1.2, 330);
+  streak.renderOrder = 2;
+  return streak;
+}
+
 // Build the whole archipelago and return every piece the game needs.
 export function buildWorld(rng) {
   const group = new THREE.Group();
@@ -551,9 +606,59 @@ export function buildWorld(rng) {
   // water read clearly at golden hour.
   // Segmented (60x60) so the swell animation can move its vertices
   // smoothly — 70 units between vertices against a ~300-unit swell.
+  // A small shader patch (onBeforeCompile) adds two things the plain
+  // Phong material cannot do: a fresnel term, so the sea is dark when
+  // looked down on and bright, sky-reflecting at grazing angles near
+  // the horizon; and a fine normal ripple, so the specular sparkle
+  // shimmers instead of sitting frozen on the swell.
+  const seaMat = phong(PALETTE.sea, { shininess: 140, specular: 0xaaccdd });
+  seaMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 };
+    shader.uniforms.uFresnelColor = { value: new THREE.Color(0xffc98a) };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vG3WorldPos;'
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvG3WorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vG3WorldPos;\nuniform float uTime;\nuniform vec3 uFresnelColor;'
+      )
+      .replace(
+        '#include <normal_fragment_begin>',
+        `#include <normal_fragment_begin>
+        // Fine ripple: two crossing sines at a much shorter wavelength
+        // than the swell, so the sun's specular breaks into sparkle.
+        // Kept small (0.03): a stronger ripple bands the whole sea.
+        normal = normalize(normal + vec3(
+          sin(vG3WorldPos.x * 0.35 + uTime * 1.3) * 0.03 +
+          sin(vG3WorldPos.z * 0.29 - uTime * 1.1) * 0.025,
+          sin(vG3WorldPos.x * 0.21 - uTime * 0.8) * 0.025,
+          cos(vG3WorldPos.z * 0.33 + uTime * 1.5) * 0.03
+        ));`
+      )
+      .replace(
+        '#include <output_fragment>',
+        `#include <output_fragment>
+        // Fresnel: only at true grazing angles (right at the horizon)
+        // does the water turn toward the warm sky colour; seen from
+        // above it stays deep. pow 5 keeps the bright band narrow —
+        // pow 3 washed the whole sea white.
+        {
+          float fres = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 5.0);
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, uFresnelColor, fres * 0.28);
+        }`
+      );
+    sea.userData.shader = shader;
+  };
   const sea = new THREE.Mesh(
     new THREE.PlaneGeometry(WORLD.seaSize, WORLD.seaSize, 60, 60),
-    phong(PALETTE.sea, { shininess: 140, specular: 0xaaccdd })
+    seaMat
   );
   sea.rotation.x = -Math.PI / 2;
   sea.position.y = 0;
@@ -562,6 +667,14 @@ export function buildWorld(rng) {
   // Flat copy of the rest positions: the swell writes heights from these.
   sea.userData.basePositions = sea.geometry.attributes.position.array.slice();
   group.add(sea);
+
+  // Sun-glint streak: a long additive band on the water along the sun's
+  // azimuth, from the western horizon across the flight line — the path
+  // of sunlight on the sea at golden hour. The gradient texture fades
+  // the streak out at both ends and both edges, and it sits just above
+  // the swell peaks so the waves never swallow it.
+  const glint = makeGlintStreak();
+  group.add(glint);
 
   // A darker deep-water disc in the middle of the sea, for depth at range.
   // Kept inside the sea plane so it never pokes out past the edges.
@@ -644,6 +757,7 @@ function shadowify(group) {
     cloudClusters: cloudSet.clusters,
     cloudBlobs: cloudSet.blobs,
     sea,
+    glint,
     // The nth target ring (0-based), or undefined past the end.
     ringAt(i) {
       return rings[i];

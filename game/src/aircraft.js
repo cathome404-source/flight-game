@@ -43,7 +43,7 @@ export function makeAircraft() {
   const orangeDark = lambert(PAINT.orangeDark);
   const metal = phong(PAINT.metal, { shininess: 70 });
   const dark = lambert(PAINT.dark);
-  const glass = phong(PAINT.glass, { shininess: 120, transparent: true, opacity: 0.85 });
+  const glass = phong(PAINT.glass, { shininess: 220, specular: 0xffe9b0, flatShading: true, transparent: true, opacity: 0.88 });
 
   // --- Fuselage: a tapered body, nose cone up front, tail cone at the back.
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.62, 4.6, 10), cream);
@@ -68,8 +68,38 @@ export function makeAircraft() {
     group.add(stripe);
   }
 
-  // --- Cockpit canopy: a dark glossy bubble over the front seats.
-  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.72, 12, 8), glass);
+  // Red tail band: a painted ring around the rear fuselage, the second
+  // accent colour of the livery so the tail is never one flat orange.
+  // The fuselage tapers 0.62 (nose) to 0.85 (tail), so at z = 2.2 the
+  // skin radius is ~0.83 — the band matches it instead of floating.
+  const tailBand = new THREE.Mesh(new THREE.CylinderGeometry(0.84, 0.84, 0.35, 10), lambert(PAINT.red));
+  tailBand.rotation.x = Math.PI / 2;
+  tailBand.position.z = 2.2;
+  group.add(tailBand);
+
+  // Panel lines: thin dark seams along the fuselage — a top centreline,
+  // two side seams, and two circumferential rings where the skin panels
+  // join. They sit a hair proud of the skin so they read in close shots.
+  // (Skin radius at the rings: ~0.66 at z = -1.2, ~0.79 at z = 1.2.)
+  const panelDark = lambert(0x3a2e22);
+  const topSeam = slab(0.05, 0.04, 4.4, panelDark);
+  topSeam.position.set(0, 0.72, 0.3);
+  group.add(topSeam);
+  for (const side of [-1, 1]) {
+    const sideSeam = slab(0.04, 0.05, 4.4, panelDark);
+    sideSeam.position.set(side * 0.6, 0.42, 0.3);
+    group.add(sideSeam);
+  }
+  for (const ringDef of [{ z: -1.2, r: 0.67 }, { z: 1.2, r: 0.8 }]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(ringDef.r, 0.025, 4, 18), panelDark);
+    ring.position.z = ringDef.z;
+    group.add(ring);
+  }
+
+  // --- Cockpit canopy: a dark faceted bubble over the front seats.
+  // Few segments + flat shading on purpose: the facets catch the low
+  // sun as separate glints instead of one smooth sheen.
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.72, 8, 6), glass);
   canopy.scale.set(0.95, 0.75, 1.7);
   canopy.position.set(0, 0.62, -0.7);
   group.add(canopy);
@@ -81,6 +111,15 @@ export function makeAircraft() {
   frame.position.set(0, 0.45, -0.7);
   group.add(frame);
 
+  // Canopy mullions: two dark bars across the bubble so the glass reads
+  // as framed panels, their edges catching the sun like the real thing.
+  for (const zoff of [-1.15, -0.25]) {
+    const bar = slab(1.28, 0.05, 0.08, dark);
+    bar.position.set(0, 0.95, zoff);
+    bar.rotation.x = 0.35;
+    group.add(bar);
+  }
+
   // --- Main wing: low wing, slightly swept, with orange tips.
   const wing = slab(9.2, 0.18, 1.7, cream);
   wing.position.set(0, -0.25, -0.2);
@@ -90,6 +129,24 @@ export function makeAircraft() {
     tip.position.set(side * 4.45, -0.25, -0.2);
     group.add(tip);
   }
+
+  // Red leading edge: a thin red strip along the wing's front edge, the
+  // livery's second accent carried across the whole span.
+  const leadingEdge = slab(9.2, 0.2, 0.12, lambert(PAINT.red));
+  leadingEdge.position.set(0, -0.25, -1.06);
+  group.add(leadingEdge);
+
+  // Wing panel lines: chordwise seams on the upper skin plus one
+  // spanwise seam just ahead of the flaps and ailerons.
+  const wingPanel = lambert(0x3a2e22);
+  for (const x of [-3.0, -1.5, 1.5, 3.0]) {
+    const seam = slab(0.04, 0.02, 1.6, wingPanel);
+    seam.position.set(x, -0.15, -0.2);
+    group.add(seam);
+  }
+  const spanSeam = slab(8.6, 0.02, 0.04, wingPanel);
+  spanSeam.position.set(0, -0.15, 0.3);
+  group.add(spanSeam);
 
   // Flaps: inboard trailing-edge panels that drop at low speed for
   // lift on approach; the flight model drives their deflection.
@@ -129,6 +186,17 @@ export function makeAircraft() {
   flash.position.set(0, 0.85, 3.72);
   flash.rotation.x = -0.18;
   group.add(flash);
+
+  // Rudder: a separate panel hinged on the fin's trailing edge. It
+  // swings with the yaw input (coordinated with the bank), so the tail
+  // visibly works the turn instead of sitting frozen.
+  const rudderPivot = new THREE.Group();
+  rudderPivot.position.set(0, 0.85, 4.15);
+  const rudder = slab(0.14, 1.55, 0.6, orangeDark);
+  rudder.position.set(0, 0, 0.32);
+  rudder.rotation.x = -0.18;
+  rudderPivot.add(rudder);
+  group.add(rudderPivot);
 
   // --- Propeller: spinner hub plus two blades, spins around the Z axis.
   const propeller = new THREE.Group();
@@ -190,6 +258,26 @@ export function makeAircraft() {
   tailWheel.position.set(0, -0.75, 3.9);
   group.add(tailWheel);
 
+  // --- Weathering: exhaust soot on the fuselage sides behind the
+  // engine, and worn dark trailing edges on the wingtips. Light touches
+  // only — the plane is loved, not wrecked.
+  const soot = new THREE.MeshBasicMaterial({
+    color: 0x2a2018,
+    transparent: true,
+    opacity: 0.38,
+    depthWrite: false,
+  });
+  for (const side of [-1, 1]) {
+    // Skin radius near the nose (z = -1.5) is ~0.64, so the stain hugs
+    // the fuselage instead of floating beside it.
+    const stain = slab(0.05, 0.5, 1.3, soot);
+    stain.position.set(side * 0.65, -0.1, -1.5);
+    group.add(stain);
+    const tipWear = slab(0.52, 0.03, 0.3, soot);
+    tipWear.position.set(side * 4.45, -0.14, 0.55);
+    group.add(tipWear);
+  }
+
   // --- Navigation lights: red port, green starboard, white tail.
   const navLights = {};
   const lightDefs = [
@@ -226,6 +314,7 @@ export function makeAircraft() {
     ailerons,
     flaps,
     elevator,
+    rudder: rudderPivot,
     navLights,
     throttle: 0,
     propAngle: 0,
@@ -236,8 +325,8 @@ export function makeAircraft() {
       plane.throttle = Math.max(0, Math.min(1, v));
     },
 
-    // Per-frame update. state may carry { roll, pitch } in -1..1 for the
-    // control surfaces; without it the surfaces sit neutral.
+    // Per-frame update. state may carry { roll, pitch, yaw } in -1..1
+    // for the control surfaces; without it the surfaces sit neutral.
     update(dt, state) {
       const input = state || {};
       // Propeller speed: a fast idle even at zero throttle, up to a blur
@@ -259,6 +348,9 @@ export function makeAircraft() {
       ailerons.right.rotation.x = -roll * 0.45;
       // Elevator deflects with the pitch input.
       elevator.rotation.x = pitch * 0.4;
+      // Rudder swings with the yaw input (coordinated with the bank):
+      // left rudder for a left turn, right rudder for a right turn.
+      rudderPivot.rotation.y = (input.yaw || 0) * 0.5;
       // Flaps drop together with the approach setting (0..1): trailing
       // edge down for lift at low speed, flush again when fast.
       const flapDeflect = input.flaps || 0;
