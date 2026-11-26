@@ -1,0 +1,87 @@
+# Flight Game — Prose Spec (best-flight-game-20261126-0057)
+
+Build a complete original 3D flight game in a desktop browser from static files, no network request. Target: the make.fun judge's first criterion (a complete flight game in screenshots) plus fun/depth, feel/polish, look/originality.
+
+## Concept
+
+"Garuda Skies" — a low-poly 3D flight game set over a tropical island archipelago at golden hour. The player pilots a small single-propeller plane. One consistent warm low-poly style for terrain, sky, sea and aircraft.
+
+## What the player sees (judge criteria first)
+
+- A chase view (default) and a cockpit view (toggle with C). The cockpit view shows an instrument panel with lit gauges.
+- Recognisable terrain: a sea, several islands with beaches, palm trees, low hills/mountains, and a coastal runway with lights.
+- The aircraft in frame, visibly built (fuselage, wings, tail, spinning propeller, navigation lights).
+- A runway or a target ring ahead in the main views.
+- A HUD showing altitude, airspeed, heading (compass), throttle, fuel, vertical speed, mission objective, timer and score.
+
+## Controls (keyboard + mouse)
+
+- Arrow keys or WASD: pitch and roll (bank to turn).
+- W/S or Shift/Ctrl: throttle up/down.
+- C: toggle cockpit/chase camera.
+- Mouse: drag to look around (camera orbit in chase view).
+- R: restart the current mission. P or Esc: pause. M: mute.
+
+## Flight model (feel + depth)
+
+- Lift depends on airspeed: below a stall speed the nose drops and a stall warning shows; above it the plane flies cleanly.
+- Turn radius depends on speed and bank: slow + steep bank turns tight, fast + shallow turns wide. Turning well is a skill.
+- Throttle controls acceleration; drag slows the plane when throttle is low.
+- Fuel depletes with throttle use. Fuel rings and landing refuel. Running out of fuel means gliding to a forced landing.
+- Damage from hard landings and terrain hits. A gentle touchdown is safe; a hard one damages the plane; 100% damage is a crash. Landings and crashes must read clearly (bounce, dust/smoke, screen shake, sound).
+
+## Missions (5, different goals)
+
+1. Takeoff — get airborne from the runway and climb past 100 m.
+2. Ring Run — fly through 8 target rings in order.
+3. Island Tour — visit 3 checkpoints over different islands.
+4. Precision Landing — land inside the marked touchdown zone on the runway.
+5. Storm Run — fly through 6 rings against the clock as wind picks up.
+
+Each mission shows its objective on the HUD, a marker/arrow pointing to the next target, and a completion banner with time and score. Completing a mission unlocks the next. A free-flight mode is available from the menu.
+
+## Audio (procedural, WebAudio, no files)
+
+- Engine hum whose pitch follows throttle, wind noise that follows airspeed, a chime when passing a ring, a thud on touchdown, a crash sound, and a short success jingle on mission complete. Mute toggle.
+
+## Tech
+
+- Three.js r149 vendored as game/vendor/three.min.js (a minified build, so it is listed as vendored and never counted as source). All other code is original, written fresh in recorded sessions from this spec.
+- ES modules under game/src/, one clear job per file. No network request at runtime: every script, image, sound and font is a file under game/ or a data: URI.
+- The game runs from static files: game/index.html opens in desktop Chrome and plays.
+
+## File layout (repo root)
+
+- main.ts — copies game/ and screenshots/ to /output and writes /output/dossier.json with buildDossier from vendor/makefun-game.ts (same shape as the kit starter's main.ts, written fresh).
+- vendor/makefun-game.ts — the kit's copy, unchanged.
+- serve.ts — serves game/ locally (localhost:8080) for play-testing.
+- shots.json — 4 shots: cover (chase view over islands with rings and runway ahead), cockpit (instruments lit), rings (flying through a ring), landing (approach to the runway).
+- game/index.html — canvas + HUD DOM, loads ./vendor/three.min.js then ./src/main.js.
+- game/src/config.js — tuning (flight, fuel, damage, missions), world constants, mission list.
+- game/src/random.js — seeded RNG (mulberry32) with range/int/pick/chance/shuffle.
+- game/src/input.js — keyboard + mouse input state.
+- game/src/world.js — terrain: sea, islands, beaches, hills, palm trees, buildings, runway with lights, target rings, checkpoints, fuel rings.
+- game/src/aircraft.js — the plane model (fuselage, wings, tail, propeller, lights) and its update.
+- game/src/flight.js — flight physics: lift, stall, turn, drag, throttle, fuel, damage, landing/crash detection.
+- game/src/missions.js — mission state machine, objectives, markers, completion.
+- game/src/hud.js — HUD (altitude, speed, heading, throttle, fuel, timer, score, objective) and cockpit instrument panel.
+- game/src/audio.js — procedural WebAudio (engine, wind, chime, thud, crash, jingle).
+- game/src/render.js — renderer, sky/sun/clouds, chase + cockpit cameras, lighting, resize.
+- game/src/shots.js — screenshot camera presets (?shot=cover|cockpit|rings|landing).
+- game/src/main.js — game loop, states (menu/playing/paused/crashed/complete), save of best score, window.__flightGame for testing.
+- game/vendor/three.min.js — vendored Three.js r149 (copied, not authored).
+- screenshots/ — 4 real renders of the game's own code at 1280x800, each under 256 KiB.
+- LICENSE — MIT (kit starter's license).
+- .makefun/owner.json — {"wallet": "BuLAX2qTex441K5B39kD1aK9CUfe3BNk4HUvNM6TpLMp"}.
+- README.md — game description with the make.fun badges and the bounty link.
+
+## Rules for the build (hard)
+
+- Compose every source file FRESH from this prose spec inside a recorded session. Never read the kit starter's game code (it is a different 2D game) and never read any earlier game code (e.g. the GTA 6 3D repo). Never re-apply old code under a recording.
+- A line counts as authored only if its FIRST appearance is the agent's own write/edit in a recorded session.
+- A file's final content must be witnessed in a recording AFTER the latest message that first wrote one of its lines. Plan a genuine revision pass (a file revised across at least 2 messages).
+- Keep each build session under ~25 minutes. Verify the recorder is alive the moment the subagent reports, write usage rows, seal IMMEDIATELY.
+- Keep spec and prompt files under ~/workspace, never /tmp.
+- The game must run from static files with no network request and no build step. All imports resolve inside game/.
+- Screenshots must be real renders of the game's own code, never edited or composited.
+- Do not copy any commercial game's names, characters, art, music or levels.
