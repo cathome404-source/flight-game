@@ -124,6 +124,8 @@ function combinedHudState() {
     wind: fs.wind,
     pitchDeg: fs.pitchDeg,
     bankDeg: fs.bankDeg,
+    gearDown: fs.gearDown,
+    gearDeploy: fs.gearDeploy,
   };
 }
 
@@ -157,6 +159,9 @@ wrapEvent('onTouchdown', (info) => {
   audio.touchdown(!info.gentle);
   if (info.gentle) {
     hud.showMessage(info.inZone ? 'Smooth landing in the zone!' : 'Smooth landing!');
+  } else if (info.belly) {
+    hud.showMessage('Belly landing!');
+    render.shake(0.7);
   } else {
     hud.showMessage('Hard landing!');
     render.shake(0.7);
@@ -375,6 +380,14 @@ function frame(now) {
   }
   if (input.takePressed('KeyE') && state.screen === 'playing' && !state.posed) {
     if (flight.startBarrelRoll(1)) hud.showMessage('Barrel Roll!');
+  }
+  // Retractable landing gear: G toggles up/down in flight only.
+  // flight.toggleGear guards the rest (ignored on the ground and
+  // when crashed); a press that does nothing shows no message.
+  if (input.takePressed('KeyG') && state.screen === 'playing' && !state.posed) {
+    if (flight.toggleGear()) {
+      hud.showMessage(flight.state.gearDown ? 'Gear Down' : 'Gear Up');
+    }
   }
 
   // Mouse-look drag feeds the renderer (chase orbit / cockpit glance).

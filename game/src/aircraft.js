@@ -249,20 +249,31 @@ export function makeAircraft() {
   blurDisc.position.set(0, 0, -3.72);
   group.add(blurDisc);
 
-  // --- Landing gear: two fixed wheels with fairings, plus a tail wheel.
+  // --- Landing gear: retractable — two main gear (strut + wheel +
+  // hubcap per side) folding inward into the fuselage, plus a tail
+  // wheel that slides up-forward into the tail cone. Each main gear
+  // hangs from a pivot at the wing root; the pivot rotates about the
+  // forward (Z) axis so the leg swings inboard and up. gear 1 = fully
+  // down, 0 = fully up (set via setGear, driven by flight each frame).
+  const gearPivots = {};
+  const GEAR_FOLD = (100 * Math.PI) / 180; // how far a pivot swings, up
   for (const side of [-1, 1]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.9, -0.25, -0.4);
     const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.1, 6), metal);
-    strut.position.set(side * 0.9, -0.9, -0.4);
+    strut.position.set(0, -0.65, 0);
     strut.rotation.z = side * 0.25;
-    group.add(strut);
+    pivot.add(strut);
     const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.28, 10), lambert(PAINT.tire));
     wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(side * 1.05, -1.35, -0.4);
-    group.add(wheel);
+    wheel.position.set(side * 0.15, -1.1, 0);
+    pivot.add(wheel);
     const hubcap = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.3, 8), orange);
     hubcap.rotation.z = Math.PI / 2;
-    hubcap.position.set(side * 1.05, -1.35, -0.4);
-    group.add(hubcap);
+    hubcap.position.set(side * 0.15, -1.1, 0);
+    pivot.add(hubcap);
+    group.add(pivot);
+    gearPivots[side < 0 ? 'left' : 'right'] = pivot;
   }
   const tailWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.16, 8), lambert(PAINT.tire));
   tailWheel.rotation.z = Math.PI / 2;
@@ -329,6 +340,12 @@ export function makeAircraft() {
     elevator,
     rudder: rudderPivot,
     navLights,
+    gearPivots,
+    tailWheel,
+    // Landing gear position: 1 = fully down, 0 = fully up. Flight
+    // drives it every frame (state.gear); setGear sets it directly
+    // for resets and posed shots.
+    gear: 1,
     throttle: 0,
     propAngle: 0,
     navTime: 0,
@@ -344,13 +361,19 @@ export function makeAircraft() {
       plane.cockpit = !!v;
     },
 
+    // Set the landing gear position directly (0 = up, 1 = down).
+    setGear(v) {
+      plane.gear = Math.max(0, Math.min(1, v));
+    },
+
     // Set the throttle (0..1). The propeller spins faster as it rises.
     setThrottle(v) {
       plane.throttle = Math.max(0, Math.min(1, v));
     },
 
     // Per-frame update. state may carry { roll, pitch, yaw } in -1..1
-    // for the control surfaces; without it the surfaces sit neutral.
+    // for the control surfaces and { gear } 0..1 for the landing gear;
+    // without it the surfaces sit neutral and the gear holds position.
     update(dt, state) {
       const input = state || {};
       // Propeller speed: a fast idle even at zero throttle, up to a blur
@@ -394,6 +417,18 @@ export function makeAircraft() {
       const flapDeflect = input.flaps || 0;
       flaps.left.rotation.x = flapDeflect * 0.55;
       flaps.right.rotation.x = flapDeflect * 0.55;
+
+      // Landing gear: flight feeds the animated position (0..1) as
+      // state.gear each frame; without it the last setGear value holds.
+      // Main gear pivots swing inboard and up into the fuselage; the
+      // tail wheel slides up-forward into the tail cone.
+      if (typeof input.gear === 'number') {
+        plane.gear = Math.max(0, Math.min(1, input.gear));
+      }
+      const gearUp = 1 - plane.gear;
+      gearPivots.left.rotation.z = gearUp * GEAR_FOLD;
+      gearPivots.right.rotation.z = -gearUp * GEAR_FOLD;
+      tailWheel.position.set(0, -0.25 - 0.5 * plane.gear, 3.0 + 0.9 * plane.gear);
 
       // Navigation lights blink on a periodic strobe pattern at any
       // throttle: the red/green wingtip lights flash once a second,

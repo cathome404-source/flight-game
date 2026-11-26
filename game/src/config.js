@@ -41,6 +41,14 @@ export const TUNING = {
     // Wind gusts in the storm mission, m/s of sideways push at peak.
     stormGust: 14,
   },
+  gear: {
+    // Seconds for the gear to travel fully up or down (animated, not a pop).
+    deployTime: 1.0,
+    // Extra drag (m/s per second) with the gear down in flight.
+    dragDown: 0.2,
+    // Damage points from a belly landing (gear up on the runway).
+    bellyDamage: 25,
+  },
   fuel: {
     // Fuel units in a full tank (100 = full).
     capacity: 100,

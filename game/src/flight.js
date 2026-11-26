@@ -107,6 +107,7 @@ export function createFlight(world, aircraft, config) {
   const fly = tune.flight;
   const fuelCfg = tune.fuel;
   const dmgCfg = tune.damage;
+  const gearCfg = tune.gear || { deployTime: 1, dragDown: 0.2, bellyDamage: 25 };
 
   // Ring / checkpoint / fuel-ring positions come from the built world when
   // available, so the physics never duplicates the layout constants.
@@ -140,6 +141,11 @@ export function createFlight(world, aircraft, config) {
     pitchDeg: 0,
     wind: 0,
     time: 0,
+    // Landing gear: down on the ground, retractable in flight.
+    // gearDown is the commanded position; gearDeploy 0..1 is the
+    // animated position (1 = fully down, 0 = fully up).
+    gearDown: true,
+    gearDeploy: 1,
   };
 
   // Proximity re-arm flags: a ring only fires again after the plane has
@@ -217,6 +223,15 @@ export function createFlight(world, aircraft, config) {
       return rolling;
     },
 
+    // Landing-gear toggle (G): only in flight — on the ground the
+    // plane sits on its wheels, and a crashed plane stays as it is.
+    // Returns true when the gear actually starts moving.
+    toggleGear() {
+      if (state.status !== 'flying') return false;
+      state.gearDown = !state.gearDown;
+      return true;
+    },
+
     addDamage(v) {
       if (state.status === 'crashed') return;
       state.damage = clamp(state.damage + v, 0, dmgCfg.maxDamage);
@@ -257,6 +272,8 @@ export function createFlight(world, aircraft, config) {
       state.pitchDeg = 0;
       state.wind = 0;
       state.time = 0;
+      state.gearDown = true;
+      state.gearDeploy = 1;
       wasStalled = false;
       stickPitch = 0;
       stickRoll = 0;
@@ -268,6 +285,7 @@ export function createFlight(world, aircraft, config) {
       for (let i = 0; i < checkpointArmed.length; i++) checkpointArmed[i] = true;
       for (let i = 0; i < fuelArmed.length; i++) fuelArmed[i] = true;
       if (aircraft && aircraft.setThrottle) aircraft.setThrottle(0);
+      if (aircraft && aircraft.setGear) aircraft.setGear(1);
       flight.syncAircraft();
     },
 
@@ -319,11 +337,22 @@ export function createFlight(world, aircraft, config) {
       state.gliding = state.fuel <= 0;
       const effectiveThrottle = state.gliding ? 0 : state.throttle;
 
+      // --- Gear travel: the animated position chases the commanded
+      // one over the configured deploy time (up or down, ~1 s).
+      const gearTarget = state.gearDown ? 1 : 0;
+      const gearStep = dt / (gearCfg.deployTime || 1);
+      if (state.gearDeploy < gearTarget) {
+        state.gearDeploy = Math.min(gearTarget, state.gearDeploy + gearStep);
+      } else if (state.gearDeploy > gearTarget) {
+        state.gearDeploy = Math.max(gearTarget, state.gearDeploy - gearStep);
+      }
+
       // --- Airspeed: engine push against drag; banked turns bleed speed.
       const speedRatio = state.speed / fly.maxSpeed;
       const drag =
         fly.idleDrag * (1 - effectiveThrottle) * (0.35 + 0.65 * speedRatio) +
-        fly.turnDrag * Math.abs(Math.sin(state.roll)) * speedRatio;
+        fly.turnDrag * Math.abs(Math.sin(state.roll)) * speedRatio +
+        (flying ? gearCfg.dragDown * state.gearDeploy : 0);
       state.speed += (fly.throttleAccel * effectiveThrottle - drag) * dt;
       state.speed = clamp(state.speed, 0, fly.maxSpeed);
 
@@ -502,7 +531,7 @@ export function createFlight(world, aircraft, config) {
         if (aircraft.setThrottle) aircraft.setThrottle(state.throttle);
         // Yaw input is the bank itself: a coordinated turn carries the
         // rudder with it, so the tail works visibly in every turn.
-        if (aircraft.update) aircraft.update(dt, { roll: stickRoll, pitch: stickPitch, flaps: flapDeploy, yaw: stickRoll });
+        if (aircraft.update) aircraft.update(dt, { roll: stickRoll, pitch: stickPitch, flaps: flapDeploy, yaw: stickRoll, gear: state.gearDeploy });
       }
       flight.syncAircraft();
     },
@@ -548,7 +577,12 @@ export function createFlight(world, aircraft, config) {
       p.y = groundY + 0.6;
 
       if (onStrip) {
-        if (vs <= dmgCfg.gentleTouchdown) {
+        // Belly landing: a gentle touchdown with the gear up still
+        // damages the plane (gearDeploy < 0.5 = mostly retracted) —
+        // treated as hard: damage, bounce, "Belly landing!" message.
+        const belly =
+          vs <= dmgCfg.gentleTouchdown && state.gearDeploy < 0.5;
+        if (!belly && vs <= dmgCfg.gentleTouchdown) {
           // Gentle touchdown: safe landing, speed bleeds off on the strip.
           state.status = 'landed';
           state.speed *= 0.35;
@@ -557,6 +591,7 @@ export function createFlight(world, aircraft, config) {
           if (flight.onEvent.onTouchdown) {
             flight.onEvent.onTouchdown({
               gentle: true,
+              belly: false,
               inZone: zone,
               verticalSpeed: state.verticalSpeed,
               x: p.x,
@@ -565,11 +600,15 @@ export function createFlight(world, aircraft, config) {
           }
           return;
         }
-        // Hard touchdown on the strip: damage, then bounce back up.
-        state.damage = clamp(state.damage + dmgCfg.hardLandingDamage, 0, dmgCfg.maxDamage);
+        // Hard or belly touchdown on the strip: damage, then bounce back up.
+        const touchdownDamage = belly
+          ? gearCfg.bellyDamage
+          : dmgCfg.hardLandingDamage;
+        state.damage = clamp(state.damage + touchdownDamage, 0, dmgCfg.maxDamage);
         if (flight.onEvent.onTouchdown) {
           flight.onEvent.onTouchdown({
             gentle: false,
+            belly,
             inZone: zone,
             verticalSpeed: state.verticalSpeed,
             x: p.x,

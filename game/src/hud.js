@@ -277,6 +277,20 @@ export function createHud(document) {
     damagePanel.style.display = 'none';
   }
 
+  // ---- Landing-gear indicator: GEAR DOWN (green) / GEAR UP (amber) /
+  // moving (GEAR… in amber). Lives in the right-hand HUD row.
+  let gearValue = null;
+  if (doc.createElement && el.hudRight) {
+    const gearPanel = mk('div', 'panel', el.hudRight);
+    gearPanel.id = 'hud-gear';
+    const lab = mk('div', 'label', gearPanel);
+    lab.textContent = 'Gear';
+    const val = mk('div', 'value', gearPanel);
+    gearValue = mk('span', '', val);
+    gearValue.id = 'hud-gear-value';
+    gearValue.textContent = 'GEAR DOWN';
+  }
+
   // ---- Cockpit instrument panel (DOM/CSS, lit gauges) ----
   const cockpit = {
     panel: null,
@@ -423,7 +437,8 @@ export function createHud(document) {
 
   // state: { alt, speed, heading, throttle, fuel, vspeed, score, time,
   //   objective, target {label, dist}, stalled, damage, missionIndex, wind,
-  //   pitchDeg, bankDeg } — pitch/bank feed the artificial horizon.
+  //   pitchDeg, bankDeg, gearDown, gearDeploy } — pitch/bank feed the
+  //   artificial horizon; gearDeploy 0..1 feeds the gear indicator.
   function update(state) {
     if (!state) return;
 
@@ -576,6 +591,26 @@ export function createHud(document) {
         'damage-color',
         'color',
         dmg >= 75 ? '#ff5252' : dmg >= 40 ? '#ffc233' : '#8dff9e'
+      );
+    }
+
+    // Landing-gear indicator: down is green, up and moving are amber.
+    if (gearValue) {
+      const deploy =
+        typeof state.gearDeploy === 'number'
+          ? state.gearDeploy
+          : state.gearDown === false
+            ? 0
+            : 1;
+      const down = deploy >= 0.99;
+      const text = down ? 'GEAR DOWN' : deploy <= 0.01 ? 'GEAR UP' : 'GEAR…';
+      writeText(gearValue, 'gear', text);
+      writeStyle(gearValue, 'gear-size', 'fontSize', '20px');
+      writeStyle(
+        gearValue,
+        'gear-color',
+        'color',
+        down ? '#8dff9e' : '#ffc233'
       );
     }
 
