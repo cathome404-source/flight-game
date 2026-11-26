@@ -97,6 +97,10 @@ export function createRenderer(canvas, world) {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.12;
   }
+  // Shadows: the sun casts a PCF-soft shadow map; meshes opt in via
+  // castShadow / receiveShadow (world.js, aircraft.js).
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(WORLD.sky.horizon, 900, 3400);
@@ -107,6 +111,20 @@ export function createRenderer(canvas, world) {
   const sunDir = sunDirection();
   const sun = new THREE.DirectionalLight(WORLD.sky.sun, 1.7);
   sun.position.set(sunDir.x * 900, sunDir.y * 900, sunDir.z * 900);
+  // Shadow camera kept tight around the play area (Garuda + runway +
+  // near islands, ~900 m half-width) so the map stays crisp at 2048.
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -900;
+  sun.shadow.camera.right = 900;
+  sun.shadow.camera.top = 900;
+  sun.shadow.camera.bottom = -900;
+  sun.shadow.camera.near = 100;
+  sun.shadow.camera.far = 2600;
+  sun.shadow.bias = -0.0006;
+  // The ortho bounds above only take effect after this — without it
+  // the shadow camera keeps its default +-5 box and nothing casts.
+  sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun);
   scene.add(sun.target);
 
@@ -129,6 +147,15 @@ export function createRenderer(canvas, world) {
   sunGlow.position.set(sunDir.x * 3200, sunDir.y * 3200, sunDir.z * 3200);
   sunGlow.scale.set(1100, 1100, 1);
   scene.add(sunGlow);
+  // Visible sun disc: a small bright disc inside the glow, so the sun
+  // itself reads as an object in the sky, not just a haze.
+  const sunDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(55, 32),
+    new THREE.MeshBasicMaterial({ color: 0xfff3c4, fog: false })
+  );
+  sunDisc.position.set(sunDir.x * 3300, sunDir.y * 3300, sunDir.z * 3300);
+  sunDisc.lookAt(0, 0, 0);
+  scene.add(sunDisc);
   const ghosts = [];
   for (let i = 0; i < 2; i++) {
     const ghost = new THREE.Sprite(

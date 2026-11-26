@@ -195,6 +195,17 @@ export function makeAircraft() {
     navLights[def.key] = bulb;
   }
 
+  // The plane casts its shadow on the terrain, runway and sea below.
+  // The translucent prop blur disc and the glass canopy are skipped —
+  // neither should throw a solid shadow.
+  group.traverse((obj) => {
+    if (obj.isMesh && obj !== blurDisc && obj !== canopy) {
+      obj.castShadow = true;
+      // The wings shade the fuselage and vice versa in the low sun.
+      obj.receiveShadow = true;
+    }
+  });
+
   // The plane's own state: throttle 0..1 drives the propeller speed.
   const plane = {
     group,

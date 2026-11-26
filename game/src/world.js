@@ -10,9 +10,13 @@ import { WORLD } from './config.js';
 const PALETTE = {
   sea: 0x1e6f7d,
   seaDeep: 0x14586b,
+  seaFoam: 0xfdf6dd,
   sand: 0xe8cf9a,
-  grass: 0x5da24a,
+  sandWet: 0xd9b47c,
+  grass: 0x4e9440,
   grassDry: 0x8aa84f,
+  grassDeep: 0x3f8434,
+  grassLight: 0x69a24e,
   rock: 0x7a6a58,
   volcano: 0x5c4a3e,
   palmTrunk: 0x8a6b45,
@@ -124,8 +128,40 @@ function makeIsland(def, rng) {
   beach.position.y = 0.5;
   island.add(beach);
 
-  // Main landmass: a low-poly cone, greener on small islands.
-  const mainColor = def.height > 120 ? PALETTE.volcano : PALETTE.grass;
+  // Wet-sand ring on the beach rim: a warmer, darker band where the
+  // waves wash, so the shoreline grades sand -> wet sand -> foam.
+  const wetSand = new THREE.Mesh(
+    new THREE.RingGeometry(def.radius * 0.86, def.radius * 1.0, 28),
+    lambert(PALETTE.sandWet, { transparent: true, opacity: 0.85 })
+  );
+  wetSand.rotation.x = -Math.PI / 2;
+  wetSand.position.y = 2.06;
+  island.add(wetSand);
+
+  // Foam fringe: a pale, semi-transparent band on the water just
+  // outside the beach, so the shoreline reads as surf, not a hard edge.
+  const foam = new THREE.Mesh(
+    new THREE.RingGeometry(def.radius * 1.0, def.radius * 1.16, 28),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.seaFoam,
+      transparent: true,
+      opacity: 0.68,
+      side: THREE.DoubleSide,
+    })
+  );
+  foam.rotation.x = -Math.PI / 2;
+  // Above the swell peaks (~1.0 m) so the surf band is never
+  // swallowed by a wave crest.
+  foam.position.y = 1.3;
+  island.add(foam);
+
+  // Main landmass: a low-poly cone; low islands vary between three
+  // greens so the hills read as mixed vegetation, not one flat colour.
+  const greens = [PALETTE.grass, PALETTE.grassDeep, PALETTE.grassLight];
+  const mainColor =
+    def.height > 120
+      ? PALETTE.volcano
+      : greens[rng.int(0, greens.length - 1)];
   const land = makeHill(def.radius * 0.92, def.height, mainColor, 9);
   land.position.y = def.height / 2 + 1;
   island.add(land);
@@ -148,7 +184,7 @@ function makeIsland(def, rng) {
     const hill = makeHill(
       rng.range(def.radius * 0.18, def.radius * 0.3),
       rng.range(def.height * 0.25, def.height * 0.5),
-      rng.chance(0.5) ? PALETTE.grass : PALETTE.grassDry,
+      rng.pick([PALETTE.grass, PALETTE.grassDry, PALETTE.grassDeep, PALETTE.grassLight]),
       6
     );
     hill.position.set(Math.cos(angle) * dist, 1, Math.sin(angle) * dist);
@@ -156,7 +192,9 @@ function makeIsland(def, rng) {
   }
 
   // Palm trees ring the beach; a few more inland on the low islands.
-  const palmCount = Math.round(def.radius / 55);
+  // Denser than before (radius/38) so the islands read as inhabited
+  // tropical shores, not bare cones.
+  const palmCount = Math.round(def.radius / 38);
   for (let i = 0; i < palmCount; i++) {
     const angle = rng.range(0, Math.PI * 2);
     const dist = rng.range(def.radius * 0.62, def.radius * 0.9);
@@ -169,7 +207,7 @@ function makeIsland(def, rng) {
   }
 
   // Huts cluster near the shore; the runway island gets a few more.
-  const hutCount = def.name === 'Garuda' ? 6 : rng.int(1, 3);
+  const hutCount = def.name === 'Garuda' ? 9 : rng.int(2, 5);
   for (let i = 0; i < hutCount; i++) {
     const angle = rng.range(0, Math.PI * 2);
     const dist = rng.range(def.radius * 0.45, def.radius * 0.75);
@@ -387,15 +425,19 @@ export function buildWorld(rng) {
   const group = new THREE.Group();
   group.name = 'world';
 
-  // Sea: one big plane, slightly glossy so the low sun glints on it.
+  // Sea: one big plane, glossy so the low sun glints on it — a
+  // brighter specular and higher shininess make the sun's path on the
+  // water read clearly at golden hour.
   // Segmented (60x60) so the swell animation can move its vertices
   // smoothly — 70 units between vertices against a ~300-unit swell.
   const sea = new THREE.Mesh(
     new THREE.PlaneGeometry(WORLD.seaSize, WORLD.seaSize, 60, 60),
-    phong(PALETTE.sea, { shininess: 90, specular: 0x557788 })
+    phong(PALETTE.sea, { shininess: 140, specular: 0xaaccdd })
   );
   sea.rotation.x = -Math.PI / 2;
   sea.position.y = 0;
+  // The sea catches the plane's and islands' shadows.
+  sea.receiveShadow = true;
   // Flat copy of the rest positions: the swell writes heights from these.
   sea.userData.basePositions = sea.geometry.attributes.position.array.slice();
   group.add(sea);
@@ -410,15 +452,30 @@ export function buildWorld(rng) {
   deep.position.y = -0.4;
   group.add(deep);
 
+// Every opaque mesh in a group casts and receives shadows: terrain
+// shades terrain, palms and huts shade the sand, the runway catches
+// the plane. Transparent meshes (foam, wet sand) are skipped — a
+// translucent ring must not cast a solid shadow.
+function shadowify(group) {
+  group.traverse((obj) => {
+    if (obj.isMesh && !(obj.material && obj.material.transparent)) {
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+    }
+  });
+}
+
   // The five named islands.
   const islands = WORLD.islands.map((def) => {
     const island = makeIsland(def, rng);
+    shadowify(island);
     group.add(island);
     return island;
   });
 
   // Coastal runway on Garuda.
   const runway = makeRunway(WORLD.runway);
+  shadowify(runway);
   group.add(runway);
 
   // 8 orange target rings, 6 red storm rings, 3 green fuel rings.
