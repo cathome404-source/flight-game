@@ -171,6 +171,33 @@ export const AIRCRAFT = {
 
 export const AIRCRAFT_IDS = ['cendrawasih', 'rajawali', 'komodo'];
 
+// ---- Hangar refits (R2-5): three upgrade tracks, 3 levels each.
+// Prices rise per level; level 1 is cheap so the first upgrade lands
+// after two or three sorties (~2220 coins for a full campaign).
+// engine: +6 m/s top speed, +0.8 throttle accel per level.
+// tank:   +20 fuel capacity per level.
+// flaps:  -2 m/s stall speed, +5 deg/s roll rate per level.
+export const REFIT_TRACKS = {
+  engine: {
+    name: 'Mesin',
+    desc: '+6 m/s top speed / level',
+    effectText: '+6 m/s top speed',
+    prices: [150, 300, 500],
+  },
+  tank: {
+    name: 'Tangki',
+    desc: '+20 kapasitas bahan bakar / level',
+    effectText: '+20 tangki',
+    prices: [120, 250, 400],
+  },
+  flaps: {
+    name: 'Flap',
+    desc: '-2 m/s stall, +5°/dtk roll / level',
+    effectText: '-2 m/s stall',
+    prices: [120, 250, 400],
+  },
+};
+
 export const WORLD = {
   // Square of open sea the game takes place on, metres across.
   seaSize: 4200,

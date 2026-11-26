@@ -7,7 +7,8 @@
 // parked on the tarmac behind the panel, so the model itself is the
 // preview. No second renderer, no extra scene.
 
-import { AIRCRAFT, AIRCRAFT_IDS, WORLD } from './config.js';
+import { AIRCRAFT, AIRCRAFT_IDS, WORLD, REFIT_TRACKS } from './config.js';
+import { refitLevels, priceFor, nextEffectText, effectiveStats } from './store.js';
 import { SORTIES } from './campaign.js';
 
 const BAR_LABELS = [
@@ -116,6 +117,11 @@ export function createHangar(opts) {
   const statsEl = doc.getElementById('hangar-stats');
   const medalsEl = doc.getElementById('hangar-medals');
   const mapEl = doc.getElementById('hangar-map');
+  const refitsEl = doc.getElementById('hangar-refits');
+  const ledgerEl = doc.getElementById('hangar-ledger');
+  const onRefit = opts.onRefit || (() => {});
+  const onRepair = opts.onRepair || (() => {});
+  const onRefuel = opts.onRefuel || (() => {});
 
   if (mapEl) mapEl.innerHTML = buildMapSvg();
 
@@ -156,10 +162,75 @@ export function createHangar(opts) {
       const tough = def.damageScale < 1
         ? 'tahan damage ' + Math.round((1 - def.damageScale) * 100) + '% lebih'
         : 'tahan damage standar';
+      const lv0 = campaign ? refitLevels(campaign.save.refits, selected) : { engine: 0, tank: 0, flaps: 0 };
+      const eff = effectiveStats(def, lv0);
       statsEl.textContent =
-        def.name + ': top ' + Math.round(def.maxSpeed * 3.6) + ' km/h · stall ' +
-        Math.round(def.stallSpeed * 3.6) + ' km/h · tangki ' + def.capacity +
-        ' · bakar ' + def.drainFullThrottle.toFixed(1) + '/dtk (penuh) · ' + tough;
+        def.name + ': top ' + Math.round(eff.maxSpeed * 3.6) + ' km/h · stall ' +
+        Math.round(eff.stallSpeed * 3.6) + ' km/h · tangki ' + eff.capacity +
+        ' · bakar ' + def.drainFullThrottle.toFixed(1) + '/dtk (penuh) · ' + tough +
+        '  ·  Refit aktif: ENG ' + lv0.engine + ' · TNK ' + lv0.tank + ' · FLP ' + lv0.flaps;
+    }
+    // Refit shop: one row per track for the selected aircraft — level
+    // pips, next-level effect + price, Buy button (disabled at max or
+    // when the coins do not cover it). Buying retunes the plane live.
+    if (refitsEl && campaign) {
+      const lv = refitLevels(campaign.save.refits, selected);
+      const coins = campaign.coins;
+      let html = '';
+      for (const track of Object.keys(REFIT_TRACKS)) {
+        const def = REFIT_TRACKS[track];
+        const level = lv[track];
+        const price = priceFor(track, level);
+        let pips = '';
+        for (let i = 0; i < 3; i++) {
+          pips += '<span class="refit-pip' + (i < level ? ' on' : '') + '">●</span>';
+        }
+        const maxed = price === null;
+        const afford = !maxed && coins >= price;
+        html += '<div class="refit-row"><span class="refit-name">' + def.name +
+          '</span><span class="refit-pips">' + pips + '</span>' +
+          '<span class="refit-desc">' + def.desc + '</span>' +
+          '<button class="btn refit-buy" data-track="' + track + '"' +
+          (maxed || !afford ? ' disabled' : '') + '>' +
+          (maxed ? 'MAX' : 'Beli · ' + price + ' 🪙') + '</button></div>';
+      }
+      html += '<div class="refit-note">Harga level berikut: ' +
+        Object.keys(REFIT_TRACKS).map((t) => REFIT_TRACKS[t].name + ' ' +
+          (priceFor(t, lv[t]) === null ? 'MAX' : priceFor(t, lv[t]) + ' 🪙')).join(' · ') +
+        '. Refit milik pesawat yang dipilih — ganti pesawat, refitnya beda.</div>';
+      refitsEl.innerHTML = html;
+      for (const btn of refitsEl.querySelectorAll('.refit-buy')) {
+        btn.addEventListener('click', () => onRefit(btn.dataset.track));
+      }
+    }
+    // Station ledger (Soundward pattern): fuel / hull / credits for
+    // the selected aircraft, with free refuel and coin repair.
+    if (ledgerEl && campaign) {
+      const fuelPct = opts.fuelPercent ? Math.round(opts.fuelPercent()) : 100;
+      const hull = campaign.hull;
+      const missing = 100 - hull;
+      const coins = campaign.coins;
+      const repairCost = missing; // 1 koin per 1% hull
+      const canRepair = missing > 0 && coins > 0;
+      ledgerEl.innerHTML =
+        '<div class="ledger-row"><span class="ledger-label">⛽ Bahan bakar</span>' +
+        '<span class="ledger-bar"><span class="ledger-fill fuel" style="width:' + fuelPct + '%"></span></span>' +
+        '<span class="ledger-num">' + fuelPct + '%</span>' +
+        '<button class="btn ledger-btn" id="ledger-refuel">Isi Penuh · gratis</button></div>' +
+        '<div class="ledger-row"><span class="ledger-label">🛠 Lambung (hull)</span>' +
+        '<span class="ledger-bar"><span class="ledger-fill hull' + (hull < 50 ? ' low' : '') + '" style="width:' + hull + '%"></span></span>' +
+        '<span class="ledger-num">' + hull + '%</span>' +
+        '<button class="btn ledger-btn" id="ledger-repair"' + (canRepair ? '' : ' disabled') + '>' +
+        (missing <= 0 ? 'Lambung mulus' : 'Perbaiki · ' + Math.min(repairCost, coins) + ' 🪙') + '</button></div>' +
+        '<div class="ledger-row"><span class="ledger-label">🪙 Kredit</span>' +
+        '<span class="ledger-num ledger-credits">' + coins + ' koin</span></div>' +
+        '<div class="refit-note">Damage sortie mengurangi lambung dan bertahan sampai diperbaiki. ' +
+        'Lambung rendah = pesawat lebih rapuh (damage masuk naik sampai +50% di 0%). ' +
+        'Bahan bakar selalu penuh saat sortie dimulai dari hangar.</div>';
+      const refuelBtn = ledgerEl.querySelector('#ledger-refuel');
+      if (refuelBtn) refuelBtn.addEventListener('click', () => onRefuel());
+      const repairBtn = ledgerEl.querySelector('#ledger-repair');
+      if (repairBtn) repairBtn.addEventListener('click', () => onRepair());
     }
     if (medalsEl) {
       const medals = campaign ? campaign.save.medals : [];

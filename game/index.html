@@ -147,6 +147,27 @@
   .map-dot { fill: #ff7a3c; stroke: #fff3e0; stroke-width: 1; }
   .map-dot-num { fill: #fff; font-size: 9px; text-anchor: middle; font-weight: bold; }
   #hangar-medals { margin-top: 12px; }
+  .refit-row { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 6px 0;
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: 8px; padding: 8px 10px; }
+  .refit-name { width: 56px; font-weight: bold; flex: none; }
+  .refit-pips { flex: none; letter-spacing: 2px; }
+  .refit-pip { color: rgba(255,255,255,0.25); }
+  .refit-pip.on { color: var(--accent); }
+  .refit-desc { flex: 1; color: var(--ink-dim); font-size: 13px; }
+  .refit-buy { padding: 6px 10px; font-size: 13px; flex: none; }
+  .refit-buy:disabled { opacity: 0.45; cursor: default; }
+  .refit-note { font-size: 13px; color: var(--ink-dim); margin: 6px 0 2px; line-height: 1.5; }
+  .ledger-row { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 6px 0; }
+  .ledger-label { width: 150px; flex: none; color: var(--ink-dim); }
+  .ledger-bar { flex: 1; height: 10px; background: rgba(255,255,255,0.15); border-radius: 5px; overflow: hidden; }
+  .ledger-fill { display: block; height: 100%; }
+  .ledger-fill.fuel { background: #7ec8e3; }
+  .ledger-fill.hull { background: #8fce7a; }
+  .ledger-fill.hull.low { background: #e05a4e; }
+  .ledger-num { width: 44px; text-align: right; flex: none; font-weight: bold; }
+  .ledger-credits { width: auto; color: var(--accent); }
+  .ledger-btn { padding: 6px 10px; font-size: 13px; flex: none; }
+  .ledger-btn:disabled { opacity: 0.45; cursor: default; }
   .medal-slot { font-size: 26px; color: var(--accent); margin-right: 6px; }
   .medal-note { font-size: 14px; color: var(--ink-dim); }
   .controls { margin-top: 22px; font-size: 14px; color: var(--ink-dim); line-height: 1.7; }
@@ -205,6 +226,10 @@
     <div id="hangar-coins">🪙 0 koin</div>
     <div id="hangar-cards"></div>
     <div id="hangar-stats"></div>
+    <h3>Refit Hangar</h3>
+    <div id="hangar-refits"></div>
+    <h3>Station Ledger</h3>
+    <div id="hangar-ledger"></div>
     <h3>Papan Dispatch</h3>
     <div id="hangar-map"></div>
     <div id="hangar-medals"></div>

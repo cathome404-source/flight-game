@@ -14,12 +14,13 @@
 // so a later session's data survives. Unlocks stay owned by missions.js.
 
 import { MISSIONS } from './config.js';
+import { buyRefit as storeBuyRefit, repairHull as storeRepairHull, applyHullDamage as storeApplyHullDamage, hullOf } from './store.js';
 
 export const SAVE_KEY = 'garuda-skies-save-v1';
 const LEGACY_COINS_KEY = 'garuda-skies-coins';
 
 function emptySave() {
-  return { coins: 0, medals: [], refits: {}, best: {}, aircraft: 'cendrawasih' };
+  return { coins: 0, medals: [], refits: {}, best: {}, aircraft: 'cendrawasih', hull: 100 };
 }
 
 export const AIRCRAFT_IDS = ['cendrawasih', 'rajawali', 'komodo'];
@@ -75,6 +76,7 @@ function readSave(missions) {
     if (raw.refits && typeof raw.refits === 'object') save.refits = raw.refits;
     if (raw.best && typeof raw.best === 'object') save.best = raw.best;
     save.aircraft = validAircraftId(raw.aircraft);
+    if (typeof raw.hull === 'number') save.hull = hullOf(raw);
     return save;
   }
   save.coins = readLegacyCoins();
@@ -103,8 +105,19 @@ function writeSave(save) {
     if (typeof localStorage !== 'undefined') {
       const fresh = readSaveRaw();
       if (fresh) {
-        if (Array.isArray(fresh.medals)) save.medals = fresh.medals;
-        if (fresh.refits && typeof fresh.refits === 'object') save.refits = fresh.refits;
+        // Merge, never clobber: this session's refits win per aircraft,
+        // fresh ones for other aircraft survive; medals union by value.
+        if (fresh.refits && typeof fresh.refits === 'object') {
+          const merged = { ...fresh.refits };
+          for (const k of Object.keys(save.refits || {})) merged[k] = save.refits[k];
+          save.refits = merged;
+        }
+        if (Array.isArray(fresh.medals)) {
+          const seen = new Set(save.medals.map((m) => JSON.stringify(m)));
+          for (const m of fresh.medals) {
+            if (!seen.has(JSON.stringify(m))) save.medals.push(m);
+          }
+        }
         // aircraft is NOT re-read here: the campaign owns it in memory
         // (the hangar writes through setAircraft), and a stale stored
         // copy must never undo a fresh selection.
@@ -204,10 +217,39 @@ export function createCampaign(missions) {
       return {
         coins: save.coins,
         medals: save.medals.slice(),
-        refits: { ...save.refits },
+        refits: JSON.parse(JSON.stringify(save.refits)),
         best: JSON.parse(JSON.stringify(save.best)),
         aircraft: save.aircraft,
+        hull: hullOf(save),
       };
+    },
+
+    // Hull condition 0..100: persists between sorties until repaired.
+    get hull() {
+      return hullOf(save);
+    },
+
+    // Buy the next refit level for the selected aircraft. Returns the
+    // price paid, or null when maxed or unaffordable.
+    buyRefit(track) {
+      const paid = storeBuyRefit(save, save.aircraft, track);
+      if (paid !== null) writeSave(save);
+      return paid;
+    },
+
+    // Repair the hull (1 coin per 1% restored, partial when broke).
+    // Returns { restored, cost }.
+    repair() {
+      const res = storeRepairHull(save);
+      if (res.cost > 0) writeSave(save);
+      return res;
+    },
+
+    // Subtract sortie damage from the hull; it stays until repaired.
+    applyHullDamage(damage) {
+      const lost = storeApplyHullDamage(save, damage);
+      if (lost > 0) writeSave(save);
+      return lost;
     },
 
     // Re-sync best score/time from the missions api into the save.

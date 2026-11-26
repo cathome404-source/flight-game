@@ -18,6 +18,7 @@ import { createHud } from './hud.js';
 import { createAudio } from './audio.js';
 import { createRenderer } from './render.js';
 import { createShots } from './shots.js';
+import { refitLevels } from './store.js';
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -67,7 +68,36 @@ const hangar = createHangar({
   document,
   campaign,
   onSelect: selectAircraft,
+  fuelPercent: () => (flight.state.fuel / (flight.state.fuelCapacity || 100)) * 100,
+  onRefit: (track) => {
+    const paid = campaign.buyRefit(track);
+    if (paid === null) {
+      hud.showMessage('Tidak bisa beli — koin kurang atau sudah MAX.');
+      return;
+    }
+    flight.setRefits(refitLevels(campaign.save.refits, campaign.aircraft));
+    flight.reset();
+    hud.showMessage('Refit dibeli! −' + paid + ' koin.');
+    if (hangar) hangar.refresh();
+  },
+  onRepair: () => {
+    const res = campaign.repair();
+    if (res.restored > 0) {
+      hud.showMessage('Lambung diperbaiki +' + res.restored + '% (−' + res.cost + ' koin).');
+    }
+    if (hangar) hangar.refresh();
+  },
+  onRefuel: () => {
+    flight.refuel();
+    hud.showMessage('Tangki penuh — gratis di hangar.');
+    if (hangar) hangar.refresh();
+  },
 });
+
+// Refit levels + hull from the save, applied to the flight model at
+// boot (before the first frame): a bought engine actually flies faster.
+flight.setRefits(refitLevels(campaign.save.refits, campaign.aircraft));
+flight.setHull(campaign.hull);
 
 function selectAircraft(id) {
   if (!campaign.setAircraft(id)) {
@@ -80,6 +110,8 @@ function selectAircraft(id) {
   render.setAircraft(aircraft);
   window.__flightGame.aircraft = aircraft;
   flight.setAircraft(aircraft);
+  flight.setRefits(refitLevels(campaign.save.refits, id));
+  flight.setHull(campaign.hull);
   flight.reset();
   render.snap();
   if (hangar) hangar.refresh();
@@ -354,6 +386,13 @@ missions.onFail = (info) => {
 };
 
 function showEnd(title, lines, screenName) {
+  // Hull ledger: sortie damage leaves the plane battered until it is
+  // repaired in the hangar — bank it into the save before the flight
+  // state is reset for the next run.
+  if (flight.state.damage > 0) {
+    campaign.applyHullDamage(flight.state.damage);
+    flight.state.damage = 0; // banked once — toMenu must not bank it again
+  }
   state.screen = screenName;
   hud.setEnd(title, lines);
   hud.setScreen(screenName);
@@ -372,6 +411,9 @@ function startMission(i) {
     hud.showMessage('Finish the previous mission to unlock this one.');
     return false;
   }
+  // Re-apply the save's refits + hull fragility for this sortie.
+  flight.setRefits(refitLevels(campaign.save.refits, campaign.aircraft));
+  flight.setHull(campaign.hull);
   // Most sorties start at golden hour; a sortie may pin its own hour
   // (the night sortie starts at 21:30).
   gameHour = missions.current && missions.current.startHour
@@ -417,6 +459,7 @@ function toMenu() {
   audio.setRain(0);
   hud.setRain(false);
   hud.setCockpit(false);
+  if (flight.state.damage > 0) campaign.applyHullDamage(flight.state.damage);
   flight.reset();
   setView('chase');
   hud.setScreen('menu');

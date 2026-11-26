@@ -5,6 +5,7 @@
 // is present (browser); a tiny fallback vector covers headless runs.
 
 import { TUNING, WORLD } from './config.js';
+import { effectiveStats, hullDamageFactor } from './store.js';
 
 const DEG = Math.PI / 180;
 const GRAVITY_TURN = 9.81;
@@ -116,6 +117,16 @@ export function createFlight(world, aircraft, config) {
   const effFlight = { ...fly };
   const effFuel = { ...fuelCfg };
   let damageScale = 1;
+  // Hangar refits (R2-5): the base stats of the selected plane plus the
+  // level bonuses from store.effectiveStats. setAircraft stores the
+  // base; setRefits re-applies the bonuses — the physics below reads
+  // effFlight/effFuel only, so a purchase retunes the plane live.
+  let baseStats = null;
+  let refitLv = { engine: 0, tank: 0, flaps: 0 };
+  // Hull fragility (R2-5 ledger): a battered hull takes more damage —
+  // factor 1.0 at hull 100, 1.5 at hull 0. Set from the campaign save
+  // at sortie start; reset() never touches it (hull lives in the save).
+  let hullFactor = 1;
   // The visible model: the hangar swaps it live, so every method below
   // reads this binding, never the create-time aircraft argument.
   let liveAircraft = aircraft;
@@ -236,25 +247,48 @@ export function createFlight(world, aircraft, config) {
 
     // Retune the flight model from the selected aircraft's stats
     // (hangar swap). Speeds, turn response, fuel burn, tank size and
-    // damage tolerance all follow the new plane immediately.
+    // damage tolerance all follow the new plane immediately; refit
+    // bonuses re-apply on top of the new base stats.
     setAircraft(plane) {
       const s = plane && plane.stats ? plane.stats : null;
       if (!s) return;
       // The hangar hands over a fresh model: the physics must animate
       // the NEW group (position, prop, surfaces), not the old one.
       liveAircraft = plane;
+      baseStats = { ...s };
+      damageScale = typeof s.damageScale === 'number' ? s.damageScale : 1;
+      flight.setRefits(refitLv);
+    },
+
+    // Apply hangar refit levels for the active aircraft (store.js
+    // effectiveStats: engine +top speed/accel, tank +capacity,
+    // flaps -stall/+roll). Called after setAircraft and after any
+    // purchase in the hangar. Keeps the current fuel, clamped to the
+    // new tank size; a sortie start (reset) fills the tank anyway.
+    setRefits(levels) {
+      refitLv = levels && typeof levels === 'object'
+        ? { engine: levels.engine || 0, tank: levels.tank || 0, flaps: levels.flaps || 0 }
+        : { engine: 0, tank: 0, flaps: 0 };
+      if (!baseStats) return;
+      const eff = effectiveStats(baseStats, refitLv);
       Object.assign(effFlight, {
-        maxSpeed: s.maxSpeed, cruiseSpeed: s.cruiseSpeed,
-        stallSpeed: s.stallSpeed, pitchRate: s.pitchRate,
-        rollRate: s.rollRate, maxBank: s.maxBank,
-        throttleAccel: s.throttleAccel,
+        maxSpeed: eff.maxSpeed, cruiseSpeed: eff.cruiseSpeed,
+        stallSpeed: eff.stallSpeed, pitchRate: eff.pitchRate,
+        rollRate: eff.rollRate, maxBank: eff.maxBank,
+        throttleAccel: eff.throttleAccel,
       });
       Object.assign(effFuel, {
-        capacity: s.capacity, drainFullThrottle: s.drainFullThrottle,
-        drainIdle: s.drainIdle,
+        capacity: eff.capacity, drainFullThrottle: eff.drainFullThrottle,
+        drainIdle: eff.drainIdle,
       });
-      damageScale = typeof s.damageScale === 'number' ? s.damageScale : 1;
       state.fuelCapacity = effFuel.capacity;
+      state.fuel = Math.min(state.fuel, effFuel.capacity);
+    },
+
+    // Hull condition 0..100 from the save: a battered hull is more
+    // fragile (damage in x1.0..1.5). Called at sortie start.
+    setHull(hull) {
+      hullFactor = hullDamageFactor(hull);
     },
 
     // Ground height under a map position (runway strip, island cone or
@@ -302,7 +336,7 @@ export function createFlight(world, aircraft, config) {
 
     addDamage(v) {
       if (state.status === 'crashed') return;
-      state.damage = clamp(state.damage + v * damageScale, 0, dmgCfg.maxDamage);
+      state.damage = clamp(state.damage + v * damageScale * hullFactor, 0, dmgCfg.maxDamage);
       if (state.damage >= dmgCfg.maxDamage) {
         flight.crash('damage');
       }
@@ -712,7 +746,7 @@ export function createFlight(world, aircraft, config) {
         const touchdownDamage = belly
           ? gearCfg.bellyDamage
           : dmgCfg.hardLandingDamage;
-        state.damage = clamp(state.damage + touchdownDamage * damageScale, 0, dmgCfg.maxDamage);
+        state.damage = clamp(state.damage + touchdownDamage * damageScale * hullFactor, 0, dmgCfg.maxDamage);
         if (flight.onEvent.onTouchdown) {
           flight.onEvent.onTouchdown({
             gentle: false,
@@ -735,7 +769,7 @@ export function createFlight(world, aircraft, config) {
 
       // Off the strip: terrain or water. A glancing clip costs damage and
       // bounces the plane back into the air; a wrecked plane crashes.
-      state.damage = clamp(state.damage + dmgCfg.terrainHitDamage * damageScale, 0, dmgCfg.maxDamage);
+      state.damage = clamp(state.damage + dmgCfg.terrainHitDamage * damageScale * hullFactor, 0, dmgCfg.maxDamage);
       if (flight.onEvent.onTerrainHit) {
         flight.onEvent.onTerrainHit({
           damage: state.damage,
