@@ -1,0 +1,502 @@
+// Garuda Skies — flight physics: lift, stall, turns, drag, fuel, damage.
+// Written fresh from the prose spec. The plane flies nose-first along -Z in
+// its own space; yaw/pitch/roll are tracked as plain angles and turned into
+// a quaternion for the aircraft group. THREE is used only when the global
+// is present (browser); a tiny fallback vector covers headless runs.
+
+import { TUNING, WORLD } from './config.js';
+
+const DEG = Math.PI / 180;
+const GRAVITY_TURN = 9.81;
+
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+// Minimal stand-in for THREE.Vector3, used only when the global is absent.
+class FallbackVec3 {
+  constructor(x, y, z) {
+    this.x = x || 0;
+    this.y = y || 0;
+    this.z = z || 0;
+  }
+  set(x, y, z) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+    return this;
+  }
+  copy(v) {
+    this.x = v.x;
+    this.y = v.y;
+    this.z = v.z;
+    return this;
+  }
+  clone() {
+    return new FallbackVec3(this.x, this.y, this.z);
+  }
+  add(v) {
+    this.x += v.x;
+    this.y += v.y;
+    this.z += v.z;
+    return this;
+  }
+}
+
+const Vec3 =
+  typeof THREE !== 'undefined' && THREE.Vector3 ? THREE.Vector3 : FallbackVec3;
+
+// Quaternion from YXZ euler angles (yaw about Y, pitch about X, roll about Z).
+// Standard composition; roll is applied last around the forward axis.
+function eulerYXZToQuat(yaw, pitch, roll) {
+  const cy = Math.cos(yaw / 2);
+  const sy = Math.sin(yaw / 2);
+  const cx = Math.cos(pitch / 2);
+  const sx = Math.sin(pitch / 2);
+  const cz = Math.cos(roll / 2);
+  const sz = Math.sin(roll / 2);
+  return {
+    x: sx * cy * cz + cx * sy * sz,
+    y: cx * sy * cz - sx * cy * sz,
+    z: cx * cy * sz - sx * sy * cz,
+    w: cx * cy * cz + sx * sy * sz,
+  };
+}
+
+// Ground height at a map position: the runway strip wins over the island
+// cone beneath it, otherwise the tallest island cone, otherwise the sea.
+function terrainHeightAt(x, z) {
+  const rw = WORLD.runway;
+  const halfLen = rw.length / 2;
+  const halfWid = rw.width / 2;
+  if (Math.abs(x - rw.x) <= halfLen && Math.abs(z - rw.z) <= halfWid) {
+    return WORLD.runwayAltitude;
+  }
+  let height = 0;
+  for (const island of WORLD.islands) {
+    const dx = x - island.x;
+    const dz = z - island.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < island.radius) {
+      const h = island.height * (1 - dist / island.radius);
+      if (h > height) height = h;
+    }
+  }
+  return height;
+}
+
+function onRunwayRect(x, z) {
+  const rw = WORLD.runway;
+  return (
+    Math.abs(x - rw.x) <= rw.length / 2 && Math.abs(z - rw.z) <= rw.width / 2
+  );
+}
+
+function inTouchdownZone(x, z) {
+  const rw = WORLD.runway;
+  return (
+    onRunwayRect(x, z) && x >= rw.touchdownZoneStart && x <= rw.touchdownZoneEnd
+  );
+}
+
+export function createFlight(world, aircraft, config) {
+  const tune = (config && config.TUNING) || TUNING;
+  const cfgWorld = (config && config.WORLD) || WORLD;
+  const fly = tune.flight;
+  const fuelCfg = tune.fuel;
+  const dmgCfg = tune.damage;
+
+  // Ring / checkpoint / fuel-ring positions come from the built world when
+  // available, so the physics never duplicates the layout constants.
+  const ringDefs = cfgWorld.rings;
+  const stormDefs = cfgWorld.stormRings;
+  const checkpointDefs = cfgWorld.checkpoints;
+  const fuelRingDefs = cfgWorld.fuelRings;
+
+  const startX = cfgWorld.runway.x - cfgWorld.runway.length / 2 + 30;
+  const startZ = cfgWorld.runway.z;
+  // Runway heading 90 means flying east (+X). Forward -Z rotated by yaw
+  // gives +X when yaw is -90 degrees.
+  const startYaw = -90 * DEG;
+
+  const state = {
+    position: new Vec3(startX, cfgWorld.runwayAltitude, startZ),
+    yaw: startYaw,
+    pitch: 0,
+    roll: 0,
+    speed: 0,
+    throttle: 0,
+    fuel: fuelCfg.capacity,
+    damage: 0,
+    status: 'onGround', // onGround | flying | landed | crashed
+    stalled: false,
+    gliding: false,
+    verticalSpeed: 0,
+    altitude: cfgWorld.runwayAltitude,
+    heading: 90,
+    bankDeg: 0,
+    pitchDeg: 0,
+    wind: 0,
+    time: 0,
+  };
+
+  // Proximity re-arm flags: a ring only fires again after the plane has
+  // left its neighbourhood, so one pass is exactly one event.
+  const ringArmed = ringDefs.map(() => true);
+  const stormArmed = stormDefs.map(() => true);
+  const checkpointArmed = checkpointDefs.map(() => true);
+  const fuelArmed = fuelRingDefs.map(() => true);
+
+  let wasStalled = false;
+
+  const flight = {
+    state,
+
+    // Event hooks. Missions and the HUD assign these; defaults are no-ops.
+    onEvent: {
+      onRing: null,
+      onStormRing: null,
+      onCheckpoint: null,
+      onFuelRing: null,
+      onTouchdown: null,
+      onTerrainHit: null,
+      onCrash: null,
+      onStall: null,
+    },
+
+    setWind(mps) {
+      state.wind = Math.max(0, mps || 0);
+    },
+
+    // Ground height under a map position (runway strip, island cone or
+    // sea). Render and HUD use it for ground clearance and camera work.
+    groundHeightAt(x, z) {
+      return terrainHeightAt(x, z);
+    },
+
+    refuel() {
+      state.fuel = fuelCfg.capacity;
+    },
+
+    addDamage(v) {
+      if (state.status === 'crashed') return;
+      state.damage = clamp(state.damage + v, 0, dmgCfg.maxDamage);
+      if (state.damage >= dmgCfg.maxDamage) {
+        flight.crash('damage');
+      }
+    },
+
+    crash(reason) {
+      if (state.status === 'crashed') return;
+      state.status = 'crashed';
+      state.speed = 0;
+      state.throttle = 0;
+      if (aircraft && aircraft.setThrottle) aircraft.setThrottle(0);
+      if (flight.onEvent.onCrash) {
+        flight.onEvent.onCrash({ reason: reason || 'crash', damage: state.damage });
+      }
+    },
+
+    reset() {
+      state.position.set(startX, cfgWorld.runwayAltitude, startZ);
+      state.yaw = startYaw;
+      state.pitch = 0;
+      state.roll = 0;
+      state.speed = 0;
+      state.throttle = 0;
+      state.fuel = fuelCfg.capacity;
+      state.damage = 0;
+      state.status = 'onGround';
+      state.stalled = false;
+      state.gliding = false;
+      state.verticalSpeed = 0;
+      state.altitude = cfgWorld.runwayAltitude;
+      state.heading = 90;
+      state.bankDeg = 0;
+      state.pitchDeg = 0;
+      state.wind = 0;
+      state.time = 0;
+      wasStalled = false;
+      for (let i = 0; i < ringArmed.length; i++) ringArmed[i] = true;
+      for (let i = 0; i < stormArmed.length; i++) stormArmed[i] = true;
+      for (let i = 0; i < checkpointArmed.length; i++) checkpointArmed[i] = true;
+      for (let i = 0; i < fuelArmed.length; i++) fuelArmed[i] = true;
+      if (aircraft && aircraft.setThrottle) aircraft.setThrottle(0);
+      flight.syncAircraft();
+    },
+
+    // Push the physics state into the visible aircraft model.
+    syncAircraft() {
+      if (!aircraft || !aircraft.group) return;
+      aircraft.group.position.copy(state.position);
+      const q = eulerYXZToQuat(state.yaw, state.pitch, state.roll);
+      if (aircraft.group.quaternion && aircraft.group.quaternion.set) {
+        aircraft.group.quaternion.set(q.x, q.y, q.z, q.w);
+      } else {
+        aircraft.group.quaternion = q;
+      }
+    },
+
+    // One simulation step. input is either the object from createInput
+    // (with axes()) or a plain { pitch, roll, throttle } axes object.
+    update(dt, input) {
+      if (state.status === 'crashed') return;
+      dt = Math.min(dt, 0.05);
+      state.time += dt;
+
+      const axes =
+        input && typeof input.axes === 'function'
+          ? input.axes()
+          : input || { pitch: 0, roll: 0, throttle: 0 };
+      const pitchIn = clamp(axes.pitch || 0, -1, 1);
+      const rollIn = clamp(axes.roll || 0, -1, 1);
+      const throttleIn = clamp(axes.throttle || 0, -1, 1);
+
+      const flying = state.status === 'flying';
+
+      // --- Throttle: Shift/W nudges it up, Ctrl/S down, 0.55 per second.
+      state.throttle = clamp(state.throttle + throttleIn * 0.55 * dt, 0, 1);
+
+      // --- Fuel burn follows the throttle; empty tank means gliding.
+      const burn =
+        fuelCfg.drainIdle +
+        (fuelCfg.drainFullThrottle - fuelCfg.drainIdle) * state.throttle;
+      state.fuel = Math.max(0, state.fuel - burn * dt);
+      state.gliding = state.fuel <= 0;
+      const effectiveThrottle = state.gliding ? 0 : state.throttle;
+
+      // --- Airspeed: engine push against drag; banked turns bleed speed.
+      const speedRatio = state.speed / fly.maxSpeed;
+      const drag =
+        fly.idleDrag * (1 - effectiveThrottle) * (0.35 + 0.65 * speedRatio) +
+        fly.turnDrag * Math.abs(Math.sin(state.roll)) * speedRatio;
+      state.speed += (fly.throttleAccel * effectiveThrottle - drag) * dt;
+      state.speed = clamp(state.speed, 0, fly.maxSpeed);
+
+      // --- Stall: below stall speed the wing stops lifting.
+      state.stalled = flying && state.speed < fly.stallSpeed;
+      if (state.stalled && !wasStalled && flight.onEvent.onStall) {
+        flight.onEvent.onStall({ speed: state.speed });
+      }
+      wasStalled = state.stalled;
+
+      if (flying) {
+        // --- Pitch and roll follow the stick; roll auto-levels when free.
+        state.pitch = clamp(
+          state.pitch + pitchIn * fly.pitchRate * DEG * dt,
+          -55 * DEG,
+          55 * DEG
+        );
+        const targetRoll = rollIn * fly.maxBank * DEG;
+        const rollRate = fly.rollRate * DEG;
+        if (rollIn !== 0) {
+          const diff = targetRoll - state.roll;
+          state.roll += clamp(diff, -rollRate * dt, rollRate * dt);
+        } else {
+          // Hands off: the wings ease back toward level flight.
+          const levelRate = 35 * DEG;
+          if (Math.abs(state.roll) <= levelRate * dt) state.roll = 0;
+          else state.roll -= Math.sign(state.roll) * levelRate * dt;
+        }
+
+        // --- Turns: bank + speed set the turn rate. Slow + steep bank
+        // turns tight, fast + shallow bank turns wide (coordinated turn).
+        if (state.speed > 1) {
+          const turnRate = (GRAVITY_TURN * Math.tan(state.roll)) / state.speed;
+          state.yaw -= turnRate * dt;
+        }
+
+        // --- Nose drop in a stall; the plane sinks while the wing is dead.
+        if (state.stalled) {
+          state.pitch = Math.max(state.pitch - fly.stallDropRate * DEG * dt, -28 * DEG);
+        }
+
+        // --- Vertical speed comes from the pitch attitude; a stall or a
+        // dead engine adds sink on top.
+        let vy = state.speed * Math.sin(state.pitch);
+        if (state.stalled) vy -= 4;
+        if (state.gliding) vy -= fly.glideSink;
+        vy = clamp(vy, -26, 26);
+        state.verticalSpeed = vy;
+
+        // --- Move along the forward vector, plus wind drift sideways.
+        const cp = Math.cos(state.pitch);
+        const fx = -cp * Math.sin(state.yaw);
+        const fz = -cp * Math.cos(state.yaw);
+        state.position.x += fx * state.speed * dt;
+        state.position.y += vy * dt;
+        state.position.z += fz * state.speed * dt;
+        if (state.wind > 0) {
+          const gust = 0.6 + 0.4 * Math.sin(state.time * 1.7);
+          state.position.x += state.wind * gust * dt;
+          state.position.z += state.wind * 0.3 * Math.sin(state.time * 0.9) * dt;
+        }
+      } else {
+        // --- On the ground: roll along the runway heading, nose level.
+        state.pitch = 0;
+        state.roll = 0;
+        state.verticalSpeed = 0;
+        const fx = -Math.sin(state.yaw);
+        const fz = -Math.cos(state.yaw);
+        state.position.x += fx * state.speed * dt;
+        state.position.z += fz * state.speed * dt;
+        state.position.y = terrainHeightAt(state.position.x, state.position.z);
+        // Brakes: rolling resistance bleeds speed when the throttle is low.
+        if (effectiveThrottle < 0.2) {
+          state.speed = Math.max(0, state.speed - 10 * dt);
+        }
+        // Refuel while parked on the runway strip.
+        if (onRunwayRect(state.position.x, state.position.z)) {
+          state.fuel = Math.min(
+            fuelCfg.capacity,
+            state.fuel + fuelCfg.refuelRate * dt
+          );
+        }
+        // --- Liftoff: past stall speed with the stick pulled, or once the
+        // plane is simply going fast enough to rotate on its own.
+        if (
+          state.speed > fly.stallSpeed * 1.02 &&
+          (pitchIn > 0.15 || state.speed > fly.cruiseSpeed)
+        ) {
+          state.status = 'flying';
+          state.pitch = Math.max(state.pitch, 6 * DEG);
+          state.position.y = terrainHeightAt(state.position.x, state.position.z) + 0.5;
+        }
+      }
+
+      // --- Derived readouts for the HUD.
+      state.altitude = state.position.y;
+      state.bankDeg = state.roll / DEG;
+      state.pitchDeg = state.pitch / DEG;
+      const hx = -Math.cos(state.pitch) * Math.sin(state.yaw);
+      const hz = Math.cos(state.pitch) * Math.cos(state.yaw);
+      state.heading = (Math.atan2(hx, hz) * 180) / Math.PI;
+      if (state.heading < 0) state.heading += 360;
+
+      // --- Ground contact while airborne: touchdown or terrain hit.
+      if (flying) {
+        const groundY = terrainHeightAt(state.position.x, state.position.z);
+        if (state.position.y <= groundY + 0.6) {
+          flight.handleTouchdown(groundY);
+        }
+      }
+
+      // --- Rings, checkpoints and fuel rings, only while airborne.
+      if (state.status === 'flying') {
+        flight.checkProximity(ringDefs, ringArmed, 'ring');
+        flight.checkProximity(stormDefs, stormArmed, 'storm');
+        flight.checkProximity(checkpointDefs, checkpointArmed, 'checkpoint');
+        flight.checkProximity(fuelRingDefs, fuelArmed, 'fuel');
+      }
+
+      // --- Keep the visible model in step with the physics.
+      if (aircraft) {
+        if (aircraft.setThrottle) aircraft.setThrottle(state.throttle);
+        if (aircraft.update) aircraft.update(dt, { roll: rollIn, pitch: pitchIn });
+      }
+      flight.syncAircraft();
+    },
+
+    // Distance test against one list of ring/checkpoint definitions.
+    checkProximity(defs, armed, kind) {
+      const p = state.position;
+      for (let i = 0; i < defs.length; i++) {
+        const def = defs[i];
+        const dx = p.x - def.x;
+        const dy = p.y - def.y;
+        const dz = p.z - def.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist < def.radius) {
+          if (armed[i]) {
+            armed[i] = false;
+            if (kind === 'ring' && flight.onEvent.onRing) {
+              flight.onEvent.onRing(i);
+            } else if (kind === 'storm' && flight.onEvent.onStormRing) {
+              flight.onEvent.onStormRing(i);
+            } else if (kind === 'checkpoint' && flight.onEvent.onCheckpoint) {
+              flight.onEvent.onCheckpoint(i);
+            } else if (kind === 'fuel') {
+              state.fuel = Math.min(
+                fuelCfg.capacity,
+                state.fuel + fuelCfg.fuelRingBonus
+              );
+              if (flight.onEvent.onFuelRing) flight.onEvent.onFuelRing(i);
+            }
+          }
+        } else if (dist > def.radius * 2.5) {
+          armed[i] = true;
+        }
+      }
+    },
+
+    // Called the moment the wheels (or belly) meet the ground in the air.
+    handleTouchdown(groundY) {
+      const p = state.position;
+      const vs = Math.abs(state.verticalSpeed);
+      const onStrip = onRunwayRect(p.x, p.z);
+      const zone = inTouchdownZone(p.x, p.z);
+      p.y = groundY + 0.6;
+
+      if (onStrip) {
+        if (vs <= dmgCfg.gentleTouchdown) {
+          // Gentle touchdown: safe landing, speed bleeds off on the strip.
+          state.status = 'landed';
+          state.speed *= 0.35;
+          state.pitch = 0;
+          state.roll = 0;
+          if (flight.onEvent.onTouchdown) {
+            flight.onEvent.onTouchdown({
+              gentle: true,
+              inZone: zone,
+              verticalSpeed: state.verticalSpeed,
+              x: p.x,
+              z: p.z,
+            });
+          }
+          return;
+        }
+        // Hard touchdown on the strip: damage, then bounce back up.
+        state.damage = clamp(state.damage + dmgCfg.hardLandingDamage, 0, dmgCfg.maxDamage);
+        if (flight.onEvent.onTouchdown) {
+          flight.onEvent.onTouchdown({
+            gentle: false,
+            inZone: zone,
+            verticalSpeed: state.verticalSpeed,
+            x: p.x,
+            z: p.z,
+          });
+        }
+        if (state.damage >= dmgCfg.maxDamage) {
+          flight.crash('hard-landing');
+          return;
+        }
+        state.position.y = groundY + 4;
+        state.pitch = 10 * DEG;
+        state.speed *= 0.55;
+        return;
+      }
+
+      // Off the strip: terrain or water. A glancing clip costs damage and
+      // bounces the plane back into the air; a wrecked plane crashes.
+      state.damage = clamp(state.damage + dmgCfg.terrainHitDamage, 0, dmgCfg.maxDamage);
+      if (flight.onEvent.onTerrainHit) {
+        flight.onEvent.onTerrainHit({
+          damage: state.damage,
+          x: p.x,
+          z: p.z,
+          height: groundY,
+        });
+      }
+      if (state.damage >= dmgCfg.maxDamage) {
+        flight.crash('terrain');
+        return;
+      }
+      state.position.y = groundY + 3;
+      state.pitch = 12 * DEG;
+      state.speed *= 0.5;
+    },
+  };
+
+  flight.syncAircraft();
+  return flight;
+}
