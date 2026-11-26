@@ -5,6 +5,7 @@
 // hills) so the layout is deterministic.
 
 import { WORLD } from './config.js';
+import { terrainHeightAt } from './flight.js';
 
 // Warm golden-hour palette for the whole archipelago.
 const PALETTE = {
@@ -401,23 +402,143 @@ function makeFuelRing(def) {
   return ring;
 }
 
-// A low-poly cloud: a few flattened white blobs drifting in the sky.
-function makeCloud(rng, x, y, z) {
-  const cloud = new THREE.Group();
-  cloud.position.set(x, y, z);
-  const puffs = rng.int(3, 5);
-  for (let i = 0; i < puffs; i++) {
-    const r = rng.range(9, 18);
-    const puff = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(r, 0),
-      lambert(PALETTE.cloud, { flatShading: true, transparent: true, opacity: 0.92 })
-    );
-    puff.position.set(rng.range(-16, 16), rng.range(-2, 3), rng.range(-8, 8));
-    puff.scale.y = 0.55;
-    cloud.add(puff);
+// Three cloud layers as InstancedMesh: high thin bright cirrus, thick
+// warm cumulus in the middle, dark purple low cloud. Puffs cluster
+// along the ring flight line (z = 330) so the cover/cockpit/rings shots
+// fly past them, with the rest scattered over the archipelago. Faint
+// shadow blobs on the sea under the flight-line clusters anchor the
+// clouds to the world instead of floating decals.
+function buildLayeredClouds(rng) {
+  const geo = new THREE.IcosahedronGeometry(1, 0);
+  const dummy = new THREE.Object3D();
+  const tmpColor = new THREE.Color();
+
+  // Flight-line clusters: the plane's route, where clouds must read in
+  // the screenshots and where flying through one fogs the view.
+  // Kept clear of the posed shot planes (cover -650,120; cockpit
+  // -350,85; rings -60,60) so no screenshot starts inside a fog bank:
+  // cumulus sits high (180–225) and offset in x, low cloud stays at
+  // least ~100 m from every posed plane.
+  const lineClusters = [];
+  for (const x of [-800, -420, -40, 340, 720, 1080]) {
+    lineClusters.push({
+      x,
+      z: 330 + rng.range(-40, 40),
+      y: rng.range(180, 225),
+      radius: 75,
+      layer: 'cumulus',
+    });
   }
-  cloud.userData.driftSpeed = rng.range(1.5, 3.5);
-  return cloud;
+  for (const x of [-450, -150, 250, 600, 950]) {
+    lineClusters.push({
+      x,
+      z: 330 + rng.range(-50, 50),
+      y: rng.range(95, 125),
+      radius: 60,
+      layer: 'low',
+    });
+  }
+
+  const layerDefs = [
+    { key: 'cirrus', yMin: 300, yMax: 380, count: 80, rMin: 14, rMax: 26, flat: 0.3, color: 0xffe6bf, opacity: 0.8, driftMin: 1.5, driftMax: 3.0 },
+    { key: 'cumulus', yMin: 150, yMax: 230, count: 140, rMin: 16, rMax: 30, flat: 0.55, color: 0xfff3e0, opacity: 0.92, driftMin: 1.2, driftMax: 2.6 },
+    { key: 'low', yMin: 80, yMax: 130, count: 70, rMin: 12, rMax: 22, flat: 0.5, color: 0x8f7ba6, opacity: 0.95, driftMin: 1.8, driftMax: 3.2 },
+  ];
+
+  const layers = {};
+  for (const def of layerDefs) {
+    const mat = lambert(def.color, {
+      flatShading: true,
+      transparent: true,
+      opacity: def.opacity,
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, def.count);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const base = new Float32Array(def.count * 3);
+    const scale = new Float32Array(def.count * 3);
+    const speed = new Float32Array(def.count);
+    const ownClusters = lineClusters.filter((c) => c.layer === def.key);
+    for (let i = 0; i < def.count; i++) {
+      let x, y, z;
+      if (ownClusters.length > 0 && rng.range(0, 1) < 0.6) {
+        const c = ownClusters[rng.int(0, ownClusters.length - 1)];
+        x = c.x + rng.range(-55, 55);
+        y = c.y + rng.range(-12, 12);
+        z = c.z + rng.range(-35, 35);
+      } else {
+        x = rng.range(-1800, 1800);
+        y = rng.range(def.yMin, def.yMax);
+        z = rng.range(-1800, 1800);
+      }
+      const r = rng.range(def.rMin, def.rMax);
+      base[i * 3] = x;
+      base[i * 3 + 1] = y;
+      base[i * 3 + 2] = z;
+      scale[i * 3] = r;
+      scale[i * 3 + 1] = r * def.flat;
+      scale[i * 3 + 2] = r;
+      speed[i] = rng.range(def.driftMin, def.driftMax);
+      dummy.position.set(x, y, z);
+      dummy.scale.set(r, r * def.flat, r);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      // Jitter each puff's colour a few percent so the layer is not one
+      // flat tint: the warm top / dark bottom read comes from the layer
+      // colours themselves (bright cirrus, warm cumulus, purple low).
+      const jitter = rng.range(0.9, 1.08);
+      tmpColor.setHex(def.color).multiplyScalar(jitter);
+      mesh.setColorAt(i, tmpColor);
+    }
+    mesh.userData.cloudDrift = { base, scale, speed };
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    layers[def.key] = mesh;
+  }
+
+  // Shadow blobs under the flight-line clusters, drifting with them.
+  const blobGeo = new THREE.CircleGeometry(1, 20);
+  const blobMat = new THREE.MeshBasicMaterial({
+    color: 0x241a12,
+    transparent: true,
+    opacity: 0.13,
+    depthWrite: false,
+  });
+  const blobs = new THREE.InstancedMesh(blobGeo, blobMat, lineClusters.length);
+  blobs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const blobBase = new Float32Array(lineClusters.length * 3);
+  const blobScale = new Float32Array(lineClusters.length * 3);
+  const blobSpeed = new Float32Array(lineClusters.length);
+  const blobQuat = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(-Math.PI / 2, 0, 0)
+  );
+  lineClusters.forEach((c, i) => {
+    const y = terrainHeightAt(c.x, c.z) + 1.2;
+    blobBase[i * 3] = c.x;
+    blobBase[i * 3 + 1] = y;
+    blobBase[i * 3 + 2] = c.z;
+    blobScale[i * 3] = c.radius * 1.5;
+    blobScale[i * 3 + 1] = c.radius * 1.1;
+    blobScale[i * 3 + 2] = 1;
+    blobSpeed[i] = rng.range(1.2, 2.6);
+    dummy.position.set(c.x, y, c.z);
+    dummy.quaternion.copy(blobQuat);
+    dummy.scale.set(c.radius * 1.5, c.radius * 1.1, 1);
+    dummy.updateMatrix();
+    blobs.setMatrixAt(i, dummy.matrix);
+  });
+  blobs.userData.cloudDrift = { base: blobBase, scale: blobScale, speed: blobSpeed };
+  blobs.userData.isBlob = true;
+  blobs.instanceMatrix.needsUpdate = true;
+  blobs.renderOrder = 1;
+
+  return {
+    cirrus: layers.cirrus,
+    cumulus: layers.cumulus,
+    low: layers.low,
+    blobs,
+    clusters: lineClusters,
+  };
 }
 
 // Build the whole archipelago and return every piece the game needs.
@@ -502,18 +623,13 @@ function shadowify(group) {
     return cp;
   });
 
-  // Drifting clouds high above the sea, clear of the rings.
-  const clouds = [];
-  for (let i = 0; i < 14; i++) {
-    const cloud = makeCloud(
-      rng,
-      rng.range(-1800, 1800),
-      rng.range(240, 380),
-      rng.range(-1800, 1800)
-    );
-    group.add(cloud);
-    clouds.push(cloud);
-  }
+  // Layered clouds: cirrus high, cumulus mid, low purple — three
+  // InstancedMesh layers plus faint shadow blobs on the sea below.
+  const cloudSet = buildLayeredClouds(rng);
+  group.add(cloudSet.cirrus);
+  group.add(cloudSet.cumulus);
+  group.add(cloudSet.low);
+  group.add(cloudSet.blobs);
 
   const world = {
     group,
@@ -523,7 +639,10 @@ function shadowify(group) {
     stormRings,
     checkpoints,
     fuelRings,
-    clouds,
+    clouds: [cloudSet.cirrus, cloudSet.cumulus, cloudSet.low],
+    cloudLayers: [cloudSet.cirrus, cloudSet.cumulus, cloudSet.low],
+    cloudClusters: cloudSet.clusters,
+    cloudBlobs: cloudSet.blobs,
     sea,
     // The nth target ring (0-based), or undefined past the end.
     ringAt(i) {

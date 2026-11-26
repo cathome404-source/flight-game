@@ -8,6 +8,7 @@
 import { TUNING, WORLD } from './config.js';
 import { terrainHeightAt } from './flight.js';
 import { createPost } from './post.js';
+import { createEffects } from './effects.js';
 
 const DEG = Math.PI / 180;
 
@@ -142,6 +143,11 @@ export function createRenderer(canvas, world) {
   // grain + fake bloom) from post.js. The frame is graded in WebGL, so
   // it is part of the canvas and part of every screenshot.
   const post = createPost(renderer);
+
+  // --- Flight effects: layered-cloud drift, in-cloud fog, wingtip
+  // contrails and wind streaks (effects.js). The aircraft is attached
+  // by main.js once its group is in the scene.
+  const effects = createEffects(scene, world);
 
   // --- Blob shadow: a soft dark ellipse pinned to the ground where the
   // plane's shadow actually falls — offset from the plane by the low
@@ -332,6 +338,12 @@ export function createRenderer(canvas, world) {
     camera,
     chaseCamera,
     cockpitCamera,
+    effects,
+
+    // Attach the aircraft so the contrails can read its wingtips.
+    setAircraft(ac) {
+      if (effects) effects.setAircraft(ac);
+    },
 
     setView(name) {
       if (name !== 'cockpit' && name !== 'chase') return;
@@ -393,13 +405,8 @@ export function createRenderer(canvas, world) {
         crashShakeDone = false;
       }
 
-      // Clouds drift slowly east and wrap around the play area.
-      if (world && world.clouds) {
-        for (const cloud of world.clouds) {
-          cloud.position.x += (cloud.userData.driftSpeed || 2) * dt;
-          if (cloud.position.x > 2000) cloud.position.x = -2000;
-        }
-      }
+      // Cloud drift lives in effects.js now (per-instance drift of the
+      // InstancedMesh layers, called just before the post pass below).
 
       // Sea swell: the water surface breathes with slow sine waves,
       // written from the rest positions stored on the sea mesh.
@@ -485,6 +492,11 @@ export function createRenderer(canvas, world) {
         blobShadow.scale.set(blobR * shadowStretch, blobR, 1);
         blobShadow.material.opacity = 0.42 * blobFade;
       }
+
+      // Flight effects (cloud drift, in-cloud fog, contrails, wind
+      // streaks) run last on purpose: the streaks and the contrail
+      // ribbons face the final, shake-adjusted camera.
+      if (effects) effects.update(dt, st, camera);
 
       // The frame goes through the post pass (grade in WebGL, so the
       // canvas — and every screenshot of it — carries the final look).

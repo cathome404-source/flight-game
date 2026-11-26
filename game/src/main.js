@@ -55,6 +55,7 @@ const hud = createHud(document);
 const audio = createAudio();
 const render = createRenderer(canvas, world);
 render.scene.add(aircraft.group);
+render.setAircraft(aircraft);
 
 const state = {
   screen: 'menu', // menu | playing | paused | crashed | complete
@@ -74,6 +75,7 @@ window.__flightGame = {
   aircraft,
   hud,
   audio,
+  effects: render.effects,
 };
 
 // ---- Live score for the HUD: missions.score is only finalised on
@@ -377,7 +379,11 @@ function frame(now) {
     hud.update(combinedHudState());
     audio.setThrottle(flight.state.throttle);
     audio.setSpeed(flight.state.speed);
-    audio.setWind(flight.state.wind);
+    // Inside a cloud the wind roars at full strength (inCloud 0..1
+    // adds up to a 14 m/s wind equivalent — the wind gain saturates).
+    audio.setWind(
+      flight.state.wind + (render.effects ? render.effects.inCloud * 14 : 0)
+    );
     // Engine load from the climb: climbing strains the engine (up to 1),
     // level cruise sits near 0.35, a descent unloads it toward 0.
     audio.setLoad(Math.max(0, Math.min(1, 0.35 + flight.state.verticalSpeed / 10)));

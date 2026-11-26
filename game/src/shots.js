@@ -27,12 +27,12 @@ export function createShots(render, flight, world, missions) {
 
   // Put the plane at one posed spot: eastbound (yaw -90) along the
   // runway line z = 330, flying, with the throttle already set.
-  function pose(x, y, z, yawDeg, pitchDeg, speed, throttle) {
+  function pose(x, y, z, yawDeg, pitchDeg, speed, throttle, bankDeg) {
     const st = flight.state;
     st.position.set(x, y, z);
     st.yaw = yawDeg * DEG;
     st.pitch = pitchDeg * DEG;
-    st.roll = 0;
+    st.roll = (bankDeg || 0) * DEG;
     st.speed = speed;
     st.throttle = throttle;
     st.fuel = 100;
@@ -43,7 +43,7 @@ export function createShots(render, flight, world, missions) {
     st.verticalSpeed = speed * Math.sin(pitchDeg * DEG);
     st.altitude = y;
     st.heading = 90;
-    st.bankDeg = 0;
+    st.bankDeg = bankDeg || 0;
     st.pitchDeg = pitchDeg;
     if (flight.syncAircraft) flight.syncAircraft();
   }
@@ -70,8 +70,10 @@ export function createShots(render, flight, world, missions) {
     if (name === 'cover') {
       // Chase view over the sea west of Garuda: the first ring dead
       // ahead, the runway strip ahead-right on the south beach.
+      // Banked 28 deg at 70 m/s so the wingtip contrails stream
+      // behind the plane and the wind streaks read in the cover frame.
       startForShot(1, 'free');
-      pose(-650, 120, ringZ, -90, 0, 55, 0.7);
+      pose(-650, 120, ringZ, -90, 0, 70, 0.7, 28);
       render.setView('chase');
     } else if (name === 'cockpit') {
       // Cockpit view on the same approach, lower, instruments lit.
@@ -81,8 +83,10 @@ export function createShots(render, flight, world, missions) {
     } else if (name === 'rings') {
       // Just short of the first ring (120, 60, 330): the orange ring
       // fills the view ahead, the plane about to fly through it.
+      // Banked 32 deg at 70 m/s: contrails streaming + wind streaks
+      // at the frame edges as the plane dives for the ring.
       startForShot(1, 'free');
-      pose(-60, 60, ringZ, -90, 0, 55, 0.75);
+      pose(-60, 60, ringZ, -90, 0, 70, 0.75, 32);
       render.setView('chase');
     } else if (name === 'landing') {
       // Final approach from the west, nose slightly down, throttle
