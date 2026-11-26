@@ -300,6 +300,53 @@ function makeRunway(rw) {
     runway.add(bar);
   }
 
+  // P9 — PAPI lights: four lamps in a row beside the runway near the
+  // west threshold, on the pilot's left as they approach eastbound.
+  // Two red + two white reads as "on glidepath" from the approach.
+  const papiX = -rw.length / 2 + 32;
+  const papiBaseZ = -(rw.width / 2 + 6);
+  const papiCols = [0xff3b30, 0xff3b30, 0xfff6e0, 0xfff6e0];
+  for (let i = 0; i < 4; i++) {
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.set(papiX, 0.7, papiBaseZ - i * 9);
+    runway.add(post);
+    const lamp = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 1.6, 2),
+      new THREE.MeshBasicMaterial({ color: papiCols[i] })
+    );
+    lamp.position.set(papiX, 1.9, papiBaseZ - i * 9);
+    runway.add(lamp);
+  }
+
+  // P9 — runway number "09" painted past the west threshold, digits
+  // built from seven-segment bars (height along the strip, top toward
+  // the far end, so an approaching pilot reads it upright).
+  function paintDigit(segments, cx, cz) {
+    // Segment bars: horizontals span the digit width (z), verticals
+    // span half the digit height (x). Digit height 12, width 7.
+    const segGeoH = new THREE.BoxGeometry(1.2, 0.2, 7);
+    const segGeoV = new THREE.BoxGeometry(6, 0.2, 1.2);
+    const segAt = {
+      a: [6, 0, segGeoH],
+      g: [0, 0, segGeoH],
+      d: [-6, 0, segGeoH],
+      f: [3, -2.9, segGeoV],
+      b: [3, 2.9, segGeoV],
+      e: [-3, -2.9, segGeoV],
+      c: [-3, 2.9, segGeoV],
+    };
+    for (const s of segments) {
+      const def = segAt[s];
+      if (!def) continue;
+      const bar = new THREE.Mesh(def[2], lambert(PALETTE.paintWhite));
+      bar.position.set(cx + def[0], 0.12, cz + def[1]);
+      runway.add(bar);
+    }
+  }
+  const numX = -rw.length / 2 + 52;
+  paintDigit(['a', 'b', 'c', 'd', 'e', 'f'], numX, -4.5); // "0"
+  paintDigit(['a', 'b', 'c', 'd', 'f', 'g'], numX, 4.5); // "9"
+
   return runway;
 }
 

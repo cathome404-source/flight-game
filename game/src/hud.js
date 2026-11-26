@@ -40,6 +40,33 @@ const PANEL_CSS = [
   '#hud-banner{position:absolute;top:30%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none}',
   '.hud-banner-title{font-size:52px;font-weight:bold;letter-spacing:3px;color:#fff3e0;text-shadow:0 4px 0 rgba(120,40,0,.55),0 8px 28px rgba(0,0,0,.7)}',
   '.hud-banner-sub{font-size:20px;color:#ffd9a0;margin-top:8px;text-shadow:0 2px 10px rgba(0,0,0,.7)}',
+  // P8 — glassmorphism: thin translucent panels, not thick boxes.
+  // The HUD reads light (font-weight 300) over a dark glass wash, so
+  // the terrain behind it stays visible through the edges.
+  '#hud .panel{background:rgba(8,14,22,.32);border:1px solid rgba(255,255,255,.16);border-radius:10px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);box-shadow:none}',
+  '#hud{font-weight:300}',
+  '#hud .label{font-weight:300;letter-spacing:2px}',
+  '#hud .value{font-weight:400}',
+  // P8 — speed / altitude tapes: a moving strip of numbers down each
+  // screen edge, the live value held in a glass centre band.
+  '.hud-tape{position:absolute;top:50%;transform:translateY(-50%);width:66px;height:280px;overflow:hidden;pointer-events:none;z-index:4}',
+  '.hud-tape.left{left:14px}',
+  '.hud-tape.right{right:14px}',
+  '.hud-tape-inner{position:absolute;left:0;top:0;width:100%;will-change:transform}',
+  '.hud-tape .tape-tick{position:absolute;left:0;width:100%;text-align:center;font-size:12px;color:#ffe9c4;text-shadow:0 1px 4px rgba(0,0,0,.8);white-space:nowrap}',
+  '.hud-tape .tape-tick.major{font-size:15px;font-weight:500;color:#fff3e0}',
+  '.hud-tape-centre{position:absolute;left:0;right:0;top:50%;height:26px;margin-top:-13px;border-top:1px solid rgba(255,179,107,.7);border-bottom:1px solid rgba(255,179,107,.7);background:rgba(8,14,22,.35);z-index:2}',
+  '.hud-tape-value{position:absolute;left:0;right:0;top:50%;height:26px;margin-top:-13px;line-height:26px;text-align:center;font-size:16px;font-weight:500;color:#fff3e0;z-index:3;text-shadow:0 1px 4px rgba(0,0,0,.8)}',
+  '.hud-tape-unit{position:absolute;left:0;right:0;top:50%;margin-top:16px;text-align:center;font-size:10px;letter-spacing:2px;color:#ffd9a0;z-index:3;text-shadow:0 1px 4px rgba(0,0,0,.8)}',
+  // P8 — waypoint arrow: a single chevron under the compass, rotated
+  // toward the next target, so the centre of the screen stays clear.
+  '#hud-waypoint{position:absolute;top:118px;left:50%;transform:translateX(-50%);z-index:4;pointer-events:none;text-align:center;display:none}',
+  '#hud-waypoint .wp-arrow{font-size:26px;line-height:1;color:#ffb36b;text-shadow:0 0 10px rgba(255,150,60,.7);display:inline-block;will-change:transform}',
+  '#hud-waypoint .wp-label{font-size:11px;letter-spacing:2px;color:#ffd9a0;text-shadow:0 1px 4px rgba(0,0,0,.8)}',
+  // P8 — objective and score fade to a whisper after 3 s without a
+  // change; any new objective or score change brings them back.
+  '#hud-objective,#hud-timer-score{transition:opacity .8s ease}',
+  '#hud-objective.hud-faded,#hud-timer-score.hud-faded{opacity:.38}',
 ].join('\n');
 
 function clamp(v, lo, hi) {
@@ -84,6 +111,7 @@ export function createHud(document) {
     objectivePanel: $('hud-objective'),
     timer: $('hud-timer'),
     score: $('hud-score'),
+    timerScore: $('hud-timer-score'),
     message: $('hud-message'),
     stall: $('hud-stall'),
     compass: $('compass'),
@@ -174,6 +202,52 @@ export function createHud(document) {
     windLine.style.display = 'none';
     windLine.style.fontSize = '12px';
     windLine.style.color = '#ffd9a0';
+  }
+
+  // ---- P8 — speed tape (left edge) + altitude tape (right edge).
+  // Each tape is a strip of tick labels that slides so the live value
+  // stays in the centre band; the static Altitude/Airspeed panels in
+  // index.html are hidden once the tapes exist, so the number is shown
+  // exactly once, moving, instead of twice and static.
+  const TAPE_HALF = 140; // half the 280px tape height
+  function makeTape(side, max, step, majorStep, pxPerUnit, unit) {
+    if (!doc.createElement || !el.hud) return null;
+    const tape = mk('div', 'hud-tape ' + side, el.hud);
+    const inner = mk('div', 'hud-tape-inner', tape);
+    for (let v = 0; v <= max; v += step) {
+      const tick = mk('span', 'tape-tick', inner);
+      tick.textContent = String(v);
+      if (v % majorStep === 0) tick.className = 'tape-tick major';
+      tick.style.top = (TAPE_HALF - v * pxPerUnit - 7) + 'px';
+    }
+    mk('div', 'hud-tape-centre', tape);
+    const val = mk('div', 'hud-tape-value', tape);
+    const un = mk('div', 'hud-tape-unit', tape);
+    un.textContent = unit;
+    return { tape, inner, val, pxPerUnit };
+  }
+  const speedTape = makeTape('left', 120, 10, 20, 2, 'm/s');
+  const altTape = makeTape('right', 600, 50, 100, 0.5, 'm');
+  function hidePanelOf(node) {
+    let p = node;
+    while (p && !(p.classList && p.classList.contains('panel'))) {
+      p = p.parentNode;
+    }
+    if (p && p.style) p.style.display = 'none';
+  }
+  if (speedTape) hidePanelOf(el.speed);
+  if (altTape) hidePanelOf(el.alt);
+
+  // ---- P8 — waypoint arrow under the compass strip.
+  let waypoint = null;
+  let waypointArrow = null;
+  let waypointLabel = null;
+  if (doc.createElement && el.hud) {
+    waypoint = mk('div', '', el.hud);
+    waypoint.id = 'hud-waypoint';
+    waypointArrow = mk('div', 'wp-arrow', waypoint);
+    waypointArrow.textContent = '➤';
+    waypointLabel = mk('div', 'wp-label', waypoint);
   }
 
   // ---- Next-target line inside the objective panel ----
@@ -272,6 +346,10 @@ export function createHud(document) {
 
   let messageTimer = null;
   let bannerTimer = null;
+  // P8 — fade clock: objective + score dim 3 s after their last change.
+  let hudChangeAt = Date.now();
+  let lastFadeObjective = null;
+  let lastFadeScore = null;
   const lowFuelAt =
     (TUNING.fuel && TUNING.fuel.lowFuelWarning) || 20;
 
@@ -354,6 +432,25 @@ export function createHud(document) {
 
     const speed = state.speed || 0;
     writeText(el.speed, 'speed', String(Math.round(speed)));
+    // P8 — the tapes slide so the live value stays in the centre band.
+    if (speedTape) {
+      writeStyle(
+        speedTape.inner,
+        'speed-tape',
+        'transform',
+        'translateY(' + (speed * speedTape.pxPerUnit).toFixed(1) + 'px)'
+      );
+      writeText(speedTape.val, 'speed-tape-val', String(Math.round(speed)));
+    }
+    if (altTape) {
+      writeStyle(
+        altTape.inner,
+        'alt-tape',
+        'transform',
+        'translateY(' + (alt * altTape.pxPerUnit).toFixed(1) + 'px)'
+      );
+      writeText(altTape.val, 'alt-tape-val', String(alt));
+    }
     const speedUnit =
       el.speed && el.speed.nextElementSibling ? el.speed.nextElementSibling : null;
     writeText(
@@ -407,6 +504,22 @@ export function createHud(document) {
 
     if (state.objective !== undefined) setObjective(state.objective);
 
+    // P8 — objective + score fade out 3 s after their last change and
+    // come back the moment either changes again.
+    const nowMs = Date.now();
+    const scoreNow = Math.round(state.score || 0);
+    if (
+      state.objective !== lastFadeObjective ||
+      scoreNow !== lastFadeScore
+    ) {
+      lastFadeObjective = state.objective;
+      lastFadeScore = scoreNow;
+      hudChangeAt = nowMs;
+    }
+    const hudFaded = nowMs - hudChangeAt > 3000;
+    setClass(el.objectivePanel, 'hud-faded', hudFaded);
+    setClass(el.timerScore, 'hud-faded', hudFaded);
+
     writeText(el.timer, 'timer', formatClock(state.time || 0));
     writeText(
       el.score,
@@ -425,6 +538,25 @@ export function createHud(document) {
         writeStyle(targetLine, 'target-display', 'display', 'block');
       } else {
         writeStyle(targetLine, 'target-display', 'display', 'none');
+      }
+    }
+
+    // P8 — waypoint arrow: points toward the next target relative to
+    // the nose (0 = dead ahead). The chevron glyph points right, so
+    // -90 deg centres it on straight ahead.
+    if (waypoint) {
+      const t = state.target;
+      if (t && t.label) {
+        writeStyle(waypoint, 'wp-display', 'display', 'block');
+        writeStyle(
+          waypointArrow,
+          'wp-rot',
+          'transform',
+          'rotate(' + (((t.bearing || 0) - 90).toFixed(0)) + 'deg)'
+        );
+        writeText(waypointLabel, 'wp-label', t.label);
+      } else {
+        writeStyle(waypoint, 'wp-display', 'display', 'none');
       }
     }
 

@@ -95,6 +95,17 @@ function combinedHudState() {
   // missions.targetMarker() reports `distance`; the HUD reads `dist` —
   // normalise here so the target line shows the real range.
   const tm = missions.targetMarker();
+  // P8 — waypoint bearing: degrees from the nose to the next target,
+  // -180..180 (0 = dead ahead). Heading is 0 = north (-z), 90 = east
+  // (+x), so the target's absolute bearing is atan2(dx, -dz).
+  let targetBearing = 0;
+  if (tm && typeof tm.x === 'number' && typeof tm.z === 'number') {
+    const dx = tm.x - fs.position.x;
+    const dz = tm.z - fs.position.z;
+    const absBearing = (Math.atan2(dx, -dz) * 180) / Math.PI;
+    targetBearing =
+      (((absBearing - (fs.heading || 0) + 540) % 360) + 360) % 360 - 180;
+  }
   return {
     alt: fs.altitude,
     speed: fs.speed,
@@ -105,7 +116,9 @@ function combinedHudState() {
     score: liveScore(),
     time: missions.elapsed,
     objective: missions.objectiveText(),
-    target: tm ? { label: tm.label, dist: tm.distance } : null,
+    target: tm
+      ? { label: tm.label, dist: tm.distance, bearing: targetBearing }
+      : null,
     stalled: fs.stalled,
     damage: fs.damage,
     wind: fs.wind,

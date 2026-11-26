@@ -89,7 +89,13 @@ function makeSkyDome() {
 
 export function createRenderer(canvas, world) {
   const camCfg = TUNING.camera;
-  const fov = camCfg.fov || 68;
+  // P7 — speed-stretched field of view: 60 deg cruising, widening to
+  // 72 deg at max speed, eased (never snapped) so the rush of speed
+  // reads without the frame jumping. The base replaces the old fixed
+  // config fov; the config value stays as the chase/cockpit fallback.
+  const FOV_BASE = 60;
+  const FOV_TOP = 72;
+  const fov = FOV_BASE;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -247,6 +253,11 @@ export function createRenderer(canvas, world) {
   let lookYaw = 0;
   let lookPitch = 0;
   let shakeAmp = 0;
+  // P7 — eased FOV state: the live field of view chases its speed
+  // target at ~2.5/s, so view switches (cockpit<->chase) ease the FOV
+  // as well as the position instead of snapping it.
+  let fovCurrent = FOV_BASE;
+  let fovApplied = FOV_BASE;
   let prevDamage = 0;
   let crashShakeDone = false;
   // True until the first frame (or after snap()): the camera jumps
@@ -313,6 +324,12 @@ export function createRenderer(canvas, world) {
       .addScaledVector(tmpForward, 14);
     tmpTarget.y += 1.2;
     chaseCamera.lookAt(tmpTarget);
+    // P7 — the chase camera banks with the plane, about a third of the
+    // plane's roll: the plane stays near-level in the frame while the
+    // horizon tilts, so a turn feels like a turn instead of a slide.
+    // Negative sign: the camera rolls the same way as the plane (a
+    // right bank is clockwise seen from behind, a negative Z rotation).
+    chaseCamera.rotateZ(-(state.roll || 0) * 0.35);
   }
 
   // Where the cockpit camera wants to be: the pilot's eye, looking
@@ -474,6 +491,29 @@ export function createRenderer(canvas, world) {
         shakeAmp *= Math.exp(-dt * 2.6);
       } else {
         shakeAmp = 0;
+      }
+
+      // P7 — speed-stretched FOV: 60 deg at rest easing to 72 deg at
+      // max speed, plus a fine high-frequency shudder that only wakes
+      // above 85% of max speed (small amplitude, ~13 Hz, so the frame
+      // trembles instead of jumping around).
+      const maxSpeed = (TUNING.flight && TUNING.flight.maxSpeed) || 88;
+      const speedRatio = clamp((st.speed || 0) / maxSpeed, 0, 1);
+      const fovTarget = FOV_BASE + (FOV_TOP - FOV_BASE) * speedRatio;
+      fovCurrent += (fovTarget - fovCurrent) * (1 - Math.exp(-dt * 2.5));
+      if (Math.abs(fovCurrent - fovApplied) > 0.01) {
+        fovApplied = fovCurrent;
+        camera.fov = fovApplied;
+        chaseCamera.fov = fovApplied;
+        cockpitCamera.fov = fovApplied;
+        camera.updateProjectionMatrix();
+        chaseCamera.updateProjectionMatrix();
+        cockpitCamera.updateProjectionMatrix();
+      }
+      if (speedRatio > 0.85) {
+        const tremble = 0.12 * ((speedRatio - 0.85) / 0.15);
+        camera.position.x += Math.sin(ambientTime * 83) * tremble * 0.5;
+        camera.position.y += Math.sin(ambientTime * 67 + 1.3) * tremble * 0.5;
       }
 
       // Blob shadow: the plane's shadow on the ground, offset along the
