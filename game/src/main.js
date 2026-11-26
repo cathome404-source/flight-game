@@ -6,7 +6,8 @@
 // passed to flight.update untouched — no inversion anywhere in this file.
 
 import { TUNING, WORLD } from './config.js';
-import { createCampaign, missionIndexForSortie } from './campaign.js';
+import { createCampaign, missionIndexForSortie, selectedAircraftId } from './campaign.js';
+import { createHangar } from './hangar.js';
 import { createRandom } from './random.js';
 import { createInput } from './input.js';
 import { buildWorld } from './world.js';
@@ -49,7 +50,7 @@ const rng = createRandom(seed);
 const canvas = document.getElementById('game');
 const input = createInput(window);
 const world = buildWorld(rng);
-const aircraft = makeAircraft();
+let aircraft = makeAircraft(selectedAircraftId());
 const flight = createFlight(world, aircraft);
 const missions = createMissions(flight, world);
 const campaign = createCampaign(missions);
@@ -58,6 +59,51 @@ const audio = createAudio();
 const render = createRenderer(canvas, world);
 render.scene.add(aircraft.group);
 render.setAircraft(aircraft);
+
+// ---- Hangar: pick the aircraft. Swapping rebuilds the 3D model, retunes
+// the flight model from the new plane's stats, resets the parked plane
+// (full tank of the new size) and persists the choice in the save.
+const hangar = createHangar({
+  document,
+  campaign,
+  onSelect: selectAircraft,
+});
+
+function selectAircraft(id) {
+  if (!campaign.setAircraft(id)) {
+    if (hangar) hangar.refresh();
+    return false;
+  }
+  render.scene.remove(aircraft.group);
+  aircraft = makeAircraft(id);
+  render.scene.add(aircraft.group);
+  render.setAircraft(aircraft);
+  window.__flightGame.aircraft = aircraft;
+  flight.setAircraft(aircraft);
+  flight.reset();
+  render.snap();
+  if (hangar) hangar.refresh();
+  return true;
+}
+
+function openHangar() {
+  const menuEl = document.getElementById('screen-menu');
+  if (menuEl) menuEl.classList.remove('on');
+  if (hangar) hangar.show();
+  render.snap();
+}
+
+function closeHangar() {
+  if (hangar) hangar.hide();
+  buildMenu();
+  const menuEl = document.getElementById('screen-menu');
+  if (menuEl) menuEl.classList.add('on');
+}
+
+const hangarBtn = document.getElementById('btn-hangar');
+if (hangarBtn) hangarBtn.addEventListener('click', openHangar);
+const hangarCloseBtn = document.getElementById('btn-hangar-close');
+if (hangarCloseBtn) hangarCloseBtn.addEventListener('click', closeHangar);
 
 const state = {
   screen: 'menu', // menu | playing | paused | crashed | complete
@@ -78,6 +124,8 @@ window.__flightGame = {
   aircraft,
   hud,
   audio,
+  hangar,
+  selectAircraft,
   effects: render.effects,
   // Day-night clock (hours, 0..24) — headless tests drive it here.
   get gameHour() {
@@ -136,7 +184,9 @@ function combinedHudState() {
     speed: fs.speed,
     heading: fs.heading,
     throttle: fs.throttle,
-    fuel: fs.fuel,
+    // Fuel as a percent of the selected plane's tank (tanks differ:
+    // the heavy carries 140, the interceptor 85), not raw units.
+    fuel: (fs.fuel / (fs.fuelCapacity || 100)) * 100,
     vspeed: fs.verticalSpeed,
     score: liveScore(),
     time: missions.elapsed,
@@ -325,6 +375,7 @@ function restartMission() {
 function toMenu() {
   state.screen = 'menu';
   state.posed = false;
+  if (hangar) hangar.hide();
   gameHour = START_HOUR;
   render.setTimeOfDay(gameHour);
   audio.engine(false);

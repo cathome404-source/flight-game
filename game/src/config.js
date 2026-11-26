@@ -108,6 +108,69 @@ export const TUNING = {
   },
 };
 
+// ---- Three aircraft (R2-2): one stat block each. Handling must feel
+// different in play, so the gaps are wide, not cosmetic: the
+// interceptor is ~23% faster and nearly twice as thirsty as the
+// trainer, the heavy is ~16% slower with a 40% bigger tank and
+// takes roughly half damage. turn is the roll rate (deg/s) —
+// bank + speed set the actual turn radius in flight.js.
+export const AIRCRAFT = {
+  cendrawasih: {
+    id: 'cendrawasih',
+    name: 'Cendrawasih',
+    role: 'Trainer — seimbang & pemaaf',
+    maxSpeed: 88,
+    cruiseSpeed: 55,
+    stallSpeed: 28,
+    pitchRate: 42,
+    rollRate: 95,
+    maxBank: 65,
+    throttleAccel: 9,
+    drainFullThrottle: 1.1,
+    drainIdle: 0.25,
+    capacity: 100,
+    damageScale: 1.0,
+    // Bars shown in the hangar (0..100), derived from the numbers above.
+    bars: { speed: 55, turn: 55, economy: 55, tank: 50, tough: 50 },
+  },
+  rajawali: {
+    id: 'rajawali',
+    name: 'Rajawali',
+    role: 'Interceptor — cepat, lincah, boros',
+    maxSpeed: 108,
+    cruiseSpeed: 68,
+    stallSpeed: 34,
+    pitchRate: 52,
+    rollRate: 125,
+    maxBank: 75,
+    throttleAccel: 12,
+    drainFullThrottle: 1.9,
+    drainIdle: 0.35,
+    capacity: 85,
+    damageScale: 1.0,
+    bars: { speed: 92, turn: 90, economy: 25, tank: 35, tough: 45 },
+  },
+  komodo: {
+    id: 'komodo',
+    name: 'Komodo',
+    role: 'Heavy — mantap, tahan banting, tangki besar',
+    maxSpeed: 74,
+    cruiseSpeed: 48,
+    stallSpeed: 22,
+    pitchRate: 34,
+    rollRate: 70,
+    maxBank: 55,
+    throttleAccel: 7,
+    drainFullThrottle: 0.7,
+    drainIdle: 0.18,
+    capacity: 140,
+    damageScale: 0.55,
+    bars: { speed: 38, turn: 35, economy: 90, tank: 95, tough: 95 },
+  },
+};
+
+export const AIRCRAFT_IDS = ['cendrawasih', 'rajawali', 'komodo'];
+
 export const WORLD = {
   // Square of open sea the game takes place on, metres across.
   seaSize: 4200,

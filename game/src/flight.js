@@ -109,6 +109,17 @@ export function createFlight(world, aircraft, config) {
   const dmgCfg = tune.damage;
   const gearCfg = tune.gear || { deployTime: 1, dragDown: 0.2, bellyDamage: 25 };
 
+  // Per-aircraft effective tuning (R2-2): mutable copies of the base
+  // tables, overwritten by setAircraft from the selected plane's stats.
+  // The physics below reads effFlight/effFuel only, so swapping the
+  // plane in the hangar retunes the whole flight model live.
+  const effFlight = { ...fly };
+  const effFuel = { ...fuelCfg };
+  let damageScale = 1;
+  // The visible model: the hangar swaps it live, so every method below
+  // reads this binding, never the create-time aircraft argument.
+  let liveAircraft = aircraft;
+
   // Ring / checkpoint / fuel-ring positions come from the built world when
   // available, so the physics never duplicates the layout constants.
   const ringDefs = cfgWorld.rings;
@@ -129,7 +140,8 @@ export function createFlight(world, aircraft, config) {
     roll: 0,
     speed: 0,
     throttle: 0,
-    fuel: fuelCfg.capacity,
+    fuel: effFuel.capacity,
+    fuelCapacity: effFuel.capacity,
     damage: 0,
     status: 'onGround', // onGround | flying | landed | crashed
     stalled: false,
@@ -210,6 +222,29 @@ export function createFlight(world, aircraft, config) {
       state.wind = Math.max(0, mps || 0);
     },
 
+    // Retune the flight model from the selected aircraft's stats
+    // (hangar swap). Speeds, turn response, fuel burn, tank size and
+    // damage tolerance all follow the new plane immediately.
+    setAircraft(plane) {
+      const s = plane && plane.stats ? plane.stats : null;
+      if (!s) return;
+      // The hangar hands over a fresh model: the physics must animate
+      // the NEW group (position, prop, surfaces), not the old one.
+      liveAircraft = plane;
+      Object.assign(effFlight, {
+        maxSpeed: s.maxSpeed, cruiseSpeed: s.cruiseSpeed,
+        stallSpeed: s.stallSpeed, pitchRate: s.pitchRate,
+        rollRate: s.rollRate, maxBank: s.maxBank,
+        throttleAccel: s.throttleAccel,
+      });
+      Object.assign(effFuel, {
+        capacity: s.capacity, drainFullThrottle: s.drainFullThrottle,
+        drainIdle: s.drainIdle,
+      });
+      damageScale = typeof s.damageScale === 'number' ? s.damageScale : 1;
+      state.fuelCapacity = effFuel.capacity;
+    },
+
     // Ground height under a map position (runway strip, island cone or
     // sea). Render and HUD use it for ground clearance and camera work.
     groundHeightAt(x, z) {
@@ -217,7 +252,7 @@ export function createFlight(world, aircraft, config) {
     },
 
     refuel() {
-      state.fuel = fuelCfg.capacity;
+      state.fuel = effFuel.capacity;
     },
 
     // Barrel roll trigger: Q rolls left (dir -1), E rolls right (dir +1).
@@ -226,7 +261,7 @@ export function createFlight(world, aircraft, config) {
     // Returns true when a roll actually starts.
     startBarrelRoll(dir) {
       if (state.status !== 'flying' || rolling) return false;
-      if (state.speed <= fly.stallSpeed + fly.barrelRollSpeedCost + 2) {
+      if (state.speed <= effFlight.stallSpeed + effFlight.barrelRollSpeedCost + 2) {
         return false;
       }
       rolling = true;
@@ -234,8 +269,8 @@ export function createFlight(world, aircraft, config) {
       rollProgress = 0;
       baseRoll = state.roll;
       state.speed = Math.max(
-        fly.stallSpeed + 1,
-        state.speed - fly.barrelRollSpeedCost
+        effFlight.stallSpeed + 1,
+        state.speed - effFlight.barrelRollSpeedCost
       );
       return true;
     },
@@ -255,7 +290,7 @@ export function createFlight(world, aircraft, config) {
 
     addDamage(v) {
       if (state.status === 'crashed') return;
-      state.damage = clamp(state.damage + v, 0, dmgCfg.maxDamage);
+      state.damage = clamp(state.damage + v * damageScale, 0, dmgCfg.maxDamage);
       if (state.damage >= dmgCfg.maxDamage) {
         flight.crash('damage');
       }
@@ -268,7 +303,7 @@ export function createFlight(world, aircraft, config) {
       state.throttle = 0;
       rolling = false;
       rollProgress = 0;
-      if (aircraft && aircraft.setThrottle) aircraft.setThrottle(0);
+      if (liveAircraft && liveAircraft.setThrottle) liveAircraft.setThrottle(0);
       if (flight.onEvent.onCrash) {
         flight.onEvent.onCrash({ reason: reason || 'crash', damage: state.damage });
       }
@@ -281,7 +316,8 @@ export function createFlight(world, aircraft, config) {
       state.roll = 0;
       state.speed = 0;
       state.throttle = 0;
-      state.fuel = fuelCfg.capacity;
+      state.fuel = effFuel.capacity;
+      state.fuelCapacity = effFuel.capacity;
       state.damage = 0;
       state.status = 'onGround';
       state.stalled = false;
@@ -309,20 +345,20 @@ export function createFlight(world, aircraft, config) {
         for (let i = 0; i < set.armed.length; i++) set.armed[i] = true;
       }
       state.refuelEnabled = true;
-      if (aircraft && aircraft.setThrottle) aircraft.setThrottle(0);
-      if (aircraft && aircraft.setGear) aircraft.setGear(1);
+      if (liveAircraft && liveAircraft.setThrottle) liveAircraft.setThrottle(0);
+      if (liveAircraft && liveAircraft.setGear) liveAircraft.setGear(1);
       flight.syncAircraft();
     },
 
     // Push the physics state into the visible aircraft model.
     syncAircraft() {
-      if (!aircraft || !aircraft.group) return;
-      aircraft.group.position.copy(state.position);
+      if (!liveAircraft || !liveAircraft.group) return;
+      liveAircraft.group.position.copy(state.position);
       const q = eulerYXZToQuat(state.yaw, state.pitch, state.roll);
-      if (aircraft.group.quaternion && aircraft.group.quaternion.set) {
-        aircraft.group.quaternion.set(q.x, q.y, q.z, q.w);
+      if (liveAircraft.group.quaternion && liveAircraft.group.quaternion.set) {
+        liveAircraft.group.quaternion.set(q.x, q.y, q.z, q.w);
       } else {
-        aircraft.group.quaternion = q;
+        liveAircraft.group.quaternion = q;
       }
     },
 
@@ -356,8 +392,8 @@ export function createFlight(world, aircraft, config) {
 
       // --- Fuel burn follows the throttle; empty tank means gliding.
       const burn =
-        fuelCfg.drainIdle +
-        (fuelCfg.drainFullThrottle - fuelCfg.drainIdle) * state.throttle;
+        effFuel.drainIdle +
+        (effFuel.drainFullThrottle - effFuel.drainIdle) * state.throttle;
       state.fuel = Math.max(0, state.fuel - burn * dt);
       state.gliding = state.fuel <= 0;
       const effectiveThrottle = state.gliding ? 0 : state.throttle;
@@ -373,16 +409,16 @@ export function createFlight(world, aircraft, config) {
       }
 
       // --- Airspeed: engine push against drag; banked turns bleed speed.
-      const speedRatio = state.speed / fly.maxSpeed;
+      const speedRatio = state.speed / effFlight.maxSpeed;
       const drag =
-        fly.idleDrag * (1 - effectiveThrottle) * (0.35 + 0.65 * speedRatio) +
-        fly.turnDrag * Math.abs(Math.sin(state.roll)) * speedRatio +
+        effFlight.idleDrag * (1 - effectiveThrottle) * (0.35 + 0.65 * speedRatio) +
+        effFlight.turnDrag * Math.abs(Math.sin(state.roll)) * speedRatio +
         (flying ? gearCfg.dragDown * state.gearDeploy : 0);
-      state.speed += (fly.throttleAccel * effectiveThrottle - drag) * dt;
-      state.speed = clamp(state.speed, 0, fly.maxSpeed);
+      state.speed += (effFlight.throttleAccel * effectiveThrottle - drag) * dt;
+      state.speed = clamp(state.speed, 0, effFlight.maxSpeed);
 
       // --- Stall: below stall speed the wing stops lifting.
-      state.stalled = flying && state.speed < fly.stallSpeed;
+      state.stalled = flying && state.speed < effFlight.stallSpeed;
       if (state.stalled && !wasStalled && flight.onEvent.onStall) {
         flight.onEvent.onStall({ speed: state.speed });
       }
@@ -399,7 +435,7 @@ export function createFlight(world, aircraft, config) {
         // --- Pitch and roll follow the smoothed stick; roll auto-levels
         // when free.
         state.pitch = clamp(
-          state.pitch + (stickPitch * fly.pitchRate * DEG + gustPitchRate) * dt,
+          state.pitch + (stickPitch * effFlight.pitchRate * DEG + gustPitchRate) * dt,
           -55 * DEG,
           55 * DEG
         );
@@ -417,7 +453,7 @@ export function createFlight(world, aircraft, config) {
         // answers the stick (handled above); the turn is suppressed so
         // the heading holds roughly through the roll.
         if (rolling) {
-          rollProgress += fly.barrelRollRate * dt;
+          rollProgress += effFlight.barrelRollRate * dt;
           if (rollProgress >= 360) {
             rolling = false;
             rollProgress = 0;
@@ -430,8 +466,8 @@ export function createFlight(world, aircraft, config) {
           // instead of snapping at full rate: the bank builds up soft and
           // settles soft — that lag IS the inertia. The old rate cap stays
           // only as a guard for huge deflections.
-          const targetRoll = stickRoll * fly.maxBank * DEG + gustRollT;
-          const rollRate = fly.rollRate * DEG;
+          const targetRoll = stickRoll * effFlight.maxBank * DEG + gustRollT;
+          const rollRate = effFlight.rollRate * DEG;
           const rollStep = (targetRoll - state.roll) * Math.min(1, dt / 0.22);
           state.roll += clamp(rollStep, -rollRate * dt, rollRate * dt);
         }
@@ -447,21 +483,21 @@ export function createFlight(world, aircraft, config) {
 
         // --- Nose drop in a stall; the plane sinks while the wing is dead.
         if (state.stalled) {
-          state.pitch = Math.max(state.pitch - fly.stallDropRate * DEG * dt, -28 * DEG);
+          state.pitch = Math.max(state.pitch - effFlight.stallDropRate * DEG * dt, -28 * DEG);
         }
 
         // --- Vertical speed comes from the pitch attitude; a stall or a
         // dead engine adds sink on top, and the gusts breathe a little.
         let vy = state.speed * Math.sin(state.pitch);
         if (state.stalled) vy -= 4;
-        if (state.gliding) vy -= fly.glideSink;
+        if (state.gliding) vy -= effFlight.glideSink;
         vy += 0.5 * Math.sin(state.time * 1.1 + 0.6);
         // --- Ground effect: low over the runway the wing rides its own
         // cushion of air — a lift boost that fades out by ~12 m up.
         if (onRunwayRect(state.position.x, state.position.z)) {
           const agl = state.position.y - terrainHeightAt(state.position.x, state.position.z);
           if (agl < 12) {
-            vy += fly.groundEffect * (1 - agl / 12);
+            vy += effFlight.groundEffect * (1 - agl / 12);
           }
         }
         vy = clamp(vy, -26, 26);
@@ -496,15 +532,15 @@ export function createFlight(world, aircraft, config) {
         // Refuel while parked on the runway strip.
         if (onRunwayRect(state.position.x, state.position.z)) {
           state.fuel = Math.min(
-            fuelCfg.capacity,
-            state.fuel + fuelCfg.refuelRate * dt
+            effFuel.capacity,
+            state.fuel + effFuel.refuelRate * dt
           );
         }
         // --- Liftoff: past stall speed with the stick pulled, or once the
         // plane is simply going fast enough to rotate on its own.
         if (
-          state.speed > fly.stallSpeed * 1.02 &&
-          (pitchIn > 0.15 || state.speed > fly.cruiseSpeed)
+          state.speed > effFlight.stallSpeed * 1.02 &&
+          (pitchIn > 0.15 || state.speed > effFlight.cruiseSpeed)
         ) {
           state.status = 'flying';
           state.pitch = Math.max(state.pitch, 6 * DEG);
@@ -553,13 +589,13 @@ export function createFlight(world, aircraft, config) {
       // as the plane accelerates past 1.35x stall speed; on the ground
       // they sit flush.
       const flapDeploy = state.status === 'flying'
-        ? clamp((fly.stallSpeed * 1.35 - state.speed) / (fly.stallSpeed * 0.35), 0, 1)
+        ? clamp((effFlight.stallSpeed * 1.35 - state.speed) / (effFlight.stallSpeed * 0.35), 0, 1)
         : 0;
-      if (aircraft) {
-        if (aircraft.setThrottle) aircraft.setThrottle(state.throttle);
+      if (liveAircraft) {
+        if (liveAircraft.setThrottle) liveAircraft.setThrottle(state.throttle);
         // Yaw input is the bank itself: a coordinated turn carries the
         // rudder with it, so the tail works visibly in every turn.
-        if (aircraft.update) aircraft.update(dt, { roll: stickRoll, pitch: stickPitch, flaps: flapDeploy, yaw: stickRoll, gear: state.gearDeploy });
+        if (liveAircraft.update) liveAircraft.update(dt, { roll: stickRoll, pitch: stickPitch, flaps: flapDeploy, yaw: stickRoll, gear: state.gearDeploy });
       }
       flight.syncAircraft();
     },
@@ -591,8 +627,8 @@ export function createFlight(world, aircraft, config) {
             } else if (kind === 'fuel') {
               if (state.refuelEnabled) {
                 state.fuel = Math.min(
-                  fuelCfg.capacity,
-                  state.fuel + fuelCfg.fuelRingBonus
+                  effFuel.capacity,
+                  state.fuel + effFuel.fuelRingBonus
                 );
                 if (flight.onEvent.onFuelRing) flight.onEvent.onFuelRing(i);
               }
@@ -640,7 +676,7 @@ export function createFlight(world, aircraft, config) {
         const touchdownDamage = belly
           ? gearCfg.bellyDamage
           : dmgCfg.hardLandingDamage;
-        state.damage = clamp(state.damage + touchdownDamage, 0, dmgCfg.maxDamage);
+        state.damage = clamp(state.damage + touchdownDamage * damageScale, 0, dmgCfg.maxDamage);
         if (flight.onEvent.onTouchdown) {
           flight.onEvent.onTouchdown({
             gentle: false,
@@ -663,7 +699,7 @@ export function createFlight(world, aircraft, config) {
 
       // Off the strip: terrain or water. A glancing clip costs damage and
       // bounces the plane back into the air; a wrecked plane crashes.
-      state.damage = clamp(state.damage + dmgCfg.terrainHitDamage, 0, dmgCfg.maxDamage);
+      state.damage = clamp(state.damage + dmgCfg.terrainHitDamage * damageScale, 0, dmgCfg.maxDamage);
       if (flight.onEvent.onTerrainHit) {
         flight.onEvent.onTerrainHit({
           damage: state.damage,
@@ -682,6 +718,8 @@ export function createFlight(world, aircraft, config) {
     },
   };
 
+  // Apply the starting aircraft's stats before the first frame.
+  if (aircraft && aircraft.stats) flight.setAircraft(aircraft);
   flight.syncAircraft();
   return flight;
 }

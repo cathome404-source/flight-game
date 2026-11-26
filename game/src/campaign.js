@@ -6,11 +6,12 @@
 //
 // THE SAVE (contract for later sessions — R2-5 refits, medals): one
 // localStorage key holding exactly this shape:
-//   { coins: number, medals: [], refits: {}, best: { <sortieId>: { score, time } } }
+//   { coins: number, medals: [], refits: {}, best: { <sortieId>: { score, time } },
+//     aircraft: 'cendrawasih' | 'rajawali' | 'komodo' }
 // medals and refits start empty; later sessions fill them. This module
-// owns coins and best (synced from the missions api); it never touches
-// medals/refits beyond preserving them on every write, so a later
-// session's data survives. Unlocks stay owned by missions.js.
+// owns coins, best and aircraft (synced from the missions api / hangar);
+// it never touches medals/refits beyond preserving them on every write,
+// so a later session's data survives. Unlocks stay owned by missions.js.
 
 import { MISSIONS } from './config.js';
 
@@ -18,7 +19,21 @@ export const SAVE_KEY = 'garuda-skies-save-v1';
 const LEGACY_COINS_KEY = 'garuda-skies-coins';
 
 function emptySave() {
-  return { coins: 0, medals: [], refits: {}, best: {} };
+  return { coins: 0, medals: [], refits: {}, best: {}, aircraft: 'cendrawasih' };
+}
+
+export const AIRCRAFT_IDS = ['cendrawasih', 'rajawali', 'komodo'];
+
+function validAircraftId(v) {
+  return AIRCRAFT_IDS.includes(v) ? v : 'cendrawasih';
+}
+
+// The selected aircraft, read straight from storage (no missions
+// needed) — main.js boots the 3D model from this before the campaign
+// object exists.
+export function selectedAircraftId() {
+  const raw = readSaveRaw();
+  return raw ? validAircraftId(raw.aircraft) : 'cendrawasih';
 }
 
 function readSaveRaw() {
@@ -59,6 +74,7 @@ function readSave(missions) {
     if (Array.isArray(raw.medals)) save.medals = raw.medals;
     if (raw.refits && typeof raw.refits === 'object') save.refits = raw.refits;
     if (raw.best && typeof raw.best === 'object') save.best = raw.best;
+    save.aircraft = validAircraftId(raw.aircraft);
     return save;
   }
   save.coins = readLegacyCoins();
@@ -89,6 +105,9 @@ function writeSave(save) {
       if (fresh) {
         if (Array.isArray(fresh.medals)) save.medals = fresh.medals;
         if (fresh.refits && typeof fresh.refits === 'object') save.refits = fresh.refits;
+        // aircraft is NOT re-read here: the campaign owns it in memory
+        // (the hangar writes through setAircraft), and a stale stored
+        // copy must never undo a fresh selection.
       }
       localStorage.setItem(SAVE_KEY, JSON.stringify(save));
     }
@@ -167,14 +186,28 @@ export function createCampaign(missions) {
       return save.coins;
     },
 
+    // Selected aircraft id; the hangar writes through setAircraft.
+    get aircraft() {
+      return save.aircraft;
+    },
+
+    setAircraft(id) {
+      const next = validAircraftId(id);
+      if (next === save.aircraft) return false;
+      save.aircraft = next;
+      writeSave(save);
+      return true;
+    },
+
     // The whole save, in contract shape (a copy — mutate through
-    // award/syncBest, never by editing this object).
+    // award/syncBest/setAircraft, never by editing this object).
     get save() {
       return {
         coins: save.coins,
         medals: save.medals.slice(),
         refits: { ...save.refits },
         best: JSON.parse(JSON.stringify(save.best)),
+        aircraft: save.aircraft,
       };
     },
 
