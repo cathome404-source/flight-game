@@ -9,7 +9,7 @@ import { WORLD } from './config.js';
 
 const DEG = Math.PI / 180;
 
-export const SHOT_NAMES = ['cover', 'cockpit', 'rings', 'landing'];
+export const SHOT_NAMES = ['cover', 'cockpit', 'rings', 'landing', 'boss', 'hangar'];
 
 function readQuery() {
   try {
@@ -42,6 +42,8 @@ export function createShots(render, flight, world, missions) {
     st.throttle = throttle;
     st.fuel = 100;
     st.damage = 0;
+    st.gearDown = false;
+    st.gearDeploy = 0;
     st.status = 'flying';
     st.stalled = false;
     st.gliding = false;
@@ -58,8 +60,8 @@ export function createShots(render, flight, world, missions) {
   // nothing is ever written to storage from here).
   function startForShot(index, freeFallback) {
     if (!missions || typeof missions.start !== 'function') return false;
-    if (typeof missions.unlocked === 'number') {
-      missions.unlocked = Math.max(missions.unlocked, 4);
+    if (typeof missions.unlocked === 'number' && index >= 0) {
+      missions.unlocked = Math.max(missions.unlocked, index);
     }
     if (index >= 0 && missions.start(index)) return true;
     return missions.start(freeFallback || 'free');
@@ -81,13 +83,35 @@ export function createShots(render, flight, world, missions) {
       // while the screenshot waits, and the turn walks the sun out of
       // the frame; wings-level locks the sun/Merapi composition.
       startForShot(1, 'free');
-      pose(1650, 100, 100, 62, 0, 70, 0.7, 0);
+      pose(1650, 100, 100, 62, 0, 70, 0.95, 0);
       render.setView('chase');
     } else if (name === 'cockpit') {
-      // Cockpit view on the same approach, lower, instruments lit.
+      // Cockpit view, ~150 m short of ring 1 (120, 60, 330) so the
+      // gold ring + number board fill the view ahead instead of
+      // reading as a distant speck; instruments lit, tapes + TAWS live.
       startForShot(1, 'free');
-      pose(-350, 85, ringZ, -90, 0, 55, 0.65);
+      pose(-30, 65, ringZ, -90, 0, 55, 0.65);
       render.setView('cockpit');
+    } else if (name === 'boss') {
+      // Boss finale (sortie 12): storm on, dusk pinned via ?time=.
+      // Rajawali banked 15 deg at 80 m/s, 180 m short of storm ring 1
+      // (300, 80, 300) so the gold storm ring reads big ahead. (A
+      // northbound pose inside the cell was tried and reverted: at
+      // ~1 fps the chase camera never settles on the new yaw in the
+      // screenshot window and storm ring 4 never entered the frame.)
+      // Storm is switched on here (posed frames never run the live
+      // storm branch in main.js) so setTimeOfDay below picks the
+      // overcast env map. (HUD target still names ring 1 — posed
+      // staging, no ring flown.)
+      startForShot(11, 'free');
+      pose(120, 88, 300, -90, 0, 80, 0.9, 15);
+      render.setView('chase');
+      if (render && typeof render.setStorm === 'function') render.setStorm(true);
+    } else if (name === 'hangar') {
+      // Hangar/dispatch screen: no flight pose — the plane stays
+      // parked on the runway behind the hangar panel; main.js opens
+      // the hangar screen for this shot name. Time pin still applies
+      // (golden-hour tarmac behind the panel).
     } else if (name === 'rings') {
       // Just short of the first ring (120, 60, 330): the orange ring
       // fills the view ahead, the plane about to fly through it.

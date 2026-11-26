@@ -645,8 +645,26 @@ if (quitEndBtn) quitEndBtn.addEventListener('click', toMenu);
 
 // ---- Screenshot staging: ?shot= poses the plane and freezes physics
 // so the composition holds while the renderer keeps drawing frames.
+// ?plane= picks the aircraft for the shot (e.g. Rajawali cover) —
+// applied before the shot poses, so the posed model is the right one.
+try {
+  const planeRaw = new URLSearchParams(window.location.search || '').get('plane');
+  if (planeRaw && ['cendrawasih', 'rajawali', 'komodo'].indexOf(planeRaw) !== -1 &&
+      planeRaw !== campaign.aircraft) {
+    selectAircraft(planeRaw);
+  }
+} catch (err) { /* no window / bad query: keep the saved aircraft */ }
 const shots = createShots(render, flight, world, missions);
-if (shots.shotName) {
+if (shots.shotName === 'hangar') {
+  // Hangar/dispatch shot: menu screen + hangar panel open, the 3D
+  // tarmac (parked plane) visible on the left of the panel.
+  state.shot = 'hangar';
+  state.posed = true;
+  state.screen = 'menu';
+  hud.setScreen('menu');
+  hud.setCockpit(false);
+  openHangar();
+} else if (shots.shotName) {
   state.shot = shots.shotName;
   state.posed = true;
   state.screen = 'playing';
