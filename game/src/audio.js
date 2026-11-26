@@ -13,6 +13,7 @@ export function createAudio() {
   let master = null;
   let engineNodes = null; // { osc1, osc2, filter, gain }
   let windNodes = null; // { src, filter, gain }
+  let rainNodes = null; // { src, filter, gain }
   let noiseBuf = null;
   let muted = false;
   let engineWanted = false;
@@ -116,6 +117,22 @@ export function createAudio() {
     wgain.connect(master);
     src.start();
     windNodes = { src, filter: wfilter, gain: wgain };
+
+    // Rain: looped white noise through a lowpass filter — a soft
+    // patter, not a hiss. Level follows setRain (0 = dry, 1 = storm).
+    const rsrc = ctx.createBufferSource();
+    rsrc.buffer = noiseBuf;
+    rsrc.loop = true;
+    const rfilter = ctx.createBiquadFilter();
+    rfilter.type = 'lowpass';
+    rfilter.frequency.value = 900;
+    const rgain = ctx.createGain();
+    rgain.gain.value = 0;
+    rsrc.connect(rfilter);
+    rfilter.connect(rgain);
+    rgain.connect(master);
+    rsrc.start();
+    rainNodes = { src: rsrc, filter: rfilter, gain: rgain };
 
     applyEngine();
     applyWind();
@@ -241,6 +258,20 @@ export function createAudio() {
     setWind(v) {
       windVal = Math.max(0, v || 0);
       if (ctx) applyWind();
+    },
+
+    // Rain level 0..1: the storm patter fades in and out with it.
+    setRain(level) {
+      if (!rainNodes) return;
+      ramp(rainNodes.gain.gain, clamp01(level || 0) * 0.14, 0.4);
+    },
+
+    // Thunder: a distant rumble — lowpassed noise with a slow decay
+    // under a deep falling thump. Fired by weather.js a beat after
+    // the lightning flash, so the crack follows the light.
+    thunder() {
+      noiseHit(2.4, 130, 0.5);
+      thump(58, 28, 1.9, 0.55);
     },
 
     // Start or stop the engine hum.

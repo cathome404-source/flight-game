@@ -63,6 +63,20 @@ const PANEL_CSS = [
   '#hud-waypoint{position:absolute;top:118px;left:50%;transform:translateX(-50%);z-index:4;pointer-events:none;text-align:center;display:none}',
   '#hud-waypoint .wp-arrow{font-size:26px;line-height:1;color:#ffb36b;text-shadow:0 0 10px rgba(255,150,60,.7);display:inline-block;will-change:transform}',
   '#hud-waypoint .wp-label{font-size:11px;letter-spacing:2px;color:#ffd9a0;text-shadow:0 1px 4px rgba(0,0,0,.8)}',
+  // R2-4 — rain on the cockpit glass: diagonal streaks sliding down
+  // the whole frame, only in cockpit view during a storm. Two
+  // layers at different speeds so the fall never reads as one flat
+  // sheet; low opacity, pointer-transparent, above the 3D canvas.
+  '#cockpit-rain{position:absolute;inset:0;pointer-events:none;display:none;z-index:6;overflow:hidden}',
+  '#cockpit-rain.on{display:block}',
+  '#cockpit-rain .rain-a,#cockpit-rain .rain-b{position:absolute;inset:0}',
+  // Seamless loops: the vertical travel is exactly one pattern period
+  // along the gradient axis (105 deg / 34 px -> 131 px; 100 deg /
+  // 52 px -> 299 px), so the streaks never jump at the loop point.
+  '#cockpit-rain .rain-a{background-image:repeating-linear-gradient(105deg,transparent 0 18px,rgba(205,225,255,.30) 18px 19px,transparent 19px 34px);animation:rainfall-a .55s linear infinite}',
+  '#cockpit-rain .rain-b{background-image:repeating-linear-gradient(100deg,transparent 0 26px,rgba(205,225,255,.20) 26px 27px,transparent 27px 52px);animation:rainfall-b .9s linear infinite}',
+  '@keyframes rainfall-a{from{background-position:0 0}to{background-position:0 131px}}',
+  '@keyframes rainfall-b{from{background-position:0 0}to{background-position:0 299px}}',
   // P8 — objective and score fade to a whisper after 3 s without a
   // change; any new objective or score change brings them back.
   '#hud-objective,#hud-timer-score{transition:opacity .8s ease}',
@@ -374,6 +388,15 @@ export function createHud(document) {
     banner.style.display = 'none';
   }
 
+  // ---- R2-4 — rain on the cockpit glass (two streak layers) ----
+  let rainOverlay = null;
+  if (doc.createElement && el.hud) {
+    rainOverlay = mk('div', '', el.hud);
+    rainOverlay.id = 'cockpit-rain';
+    mk('div', 'rain-a', rainOverlay);
+    mk('div', 'rain-b', rainOverlay);
+  }
+
   let messageTimer = null;
   let bannerTimer = null;
   // P8 — fade clock: objective + score dim 3 s after their last change.
@@ -422,6 +445,13 @@ export function createHud(document) {
   function setCockpit(on) {
     if (!cockpit.panel) return;
     setClass(cockpit.panel, 'on', !!on);
+  }
+
+  // Rain streaks on the cockpit glass (R2-4): on only in cockpit view
+  // during a storm — main.js drives it every frame while playing.
+  function setRain(on) {
+    if (!rainOverlay) return;
+    setClass(rainOverlay, 'on', !!on);
   }
 
   // name: 'menu' | 'playing' | 'paused' | 'crashed' | 'complete'
@@ -635,7 +665,22 @@ export function createHud(document) {
 
     if (windLine) {
       const w = state.wind || 0;
-      if (w > 0.5) {
+      const g = state.gust || null;
+      const gStr = g ? g.strength || 0 : 0;
+      if (gStr > 3) {
+        // Storm gust: 8-way arrow for the push direction (world xz:
+        // +x east, -z north) plus its strength, so the pilot can see
+        // the shove coming and fly against it.
+        const deg = Math.atan2(-(g.z || 0), g.x || 0) * 180 / Math.PI;
+        const arrows = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘'];
+        const idx = ((Math.round(deg / 45) % 8) + 8) % 8;
+        writeText(
+          windLine,
+          'wind',
+          '💨 Hembusan ' + Math.round(gStr) + ' m/s ' + arrows[idx]
+        );
+        writeStyle(windLine, 'wind-display', 'display', 'block');
+      } else if (w > 0.5) {
         writeText(windLine, 'wind', 'Wind ' + Math.round(w) + ' m/s');
         writeStyle(windLine, 'wind-display', 'display', 'block');
       } else {
@@ -690,5 +735,6 @@ export function createHud(document) {
     setScreen,
     setEnd,
     setCockpit,
+    setRain,
   };
 }

@@ -2,13 +2,16 @@
 // Written fresh from the prose spec. Uses the global THREE loaded by
 // index.html as a classic script (no import). The world group is added to
 // the scene here; the aircraft group is added by main.js. One real render
-// camera is lerped toward the active virtual camera (chase or cockpit),
-// so toggling C glides instead of snapping.
+// camera is lerped toward the active virtual camera (chase, cockpit
+// or deck), so toggling views glides instead of snapping — except
+// the cockpit eye, which tracks fast so it never trails behind the
+// plane in flight.
 
 import { TUNING, WORLD } from './config.js';
 import { terrainHeightAt } from './flight.js';
 import { createPost } from './post.js';
 import { createEffects } from './effects.js';
+import { createWeather } from './weather.js';
 
 const DEG = Math.PI / 180;
 
@@ -250,6 +253,10 @@ export function createRenderer(canvas, world) {
   // by main.js once its group is in the scene.
   const effects = createEffects(scene, world);
 
+  // --- Storm weather: rain, lightning, gusts, storm cell (weather.js).
+  // Inactive until setStorm(true) — the boss finale turns it on.
+  const weather = createWeather(scene);
+
   // --- Blob shadow: a soft dark ellipse pinned to the ground where the
   // plane's shadow actually falls — offset from the plane by the low
   // sun (agl / tan(elevation)) and stretched along the sun direction,
@@ -355,11 +362,14 @@ export function createRenderer(canvas, world) {
   scene.add(landingLight);
   scene.add(landingLight.target);
 
-  // --- Cameras: two virtual cameras plus the one real camera that the
+  // --- Cameras: three virtual cameras plus the one real camera that the
   // renderer draws with. The real camera chases the active virtual one.
   const aspect = 16 / 10;
   const chaseCamera = new THREE.PerspectiveCamera(fov, aspect, 0.1, 8000);
   const cockpitCamera = new THREE.PerspectiveCamera(fov, aspect, 0.1, 8000);
+  // Deck-cam (R2-4): a low camera by the runway threshold, LSO-style,
+  // watching the plane come in — the 4th angle, on key V.
+  const deckCamera = new THREE.PerspectiveCamera(fov, aspect, 0.1, 8000);
   const camera = new THREE.PerspectiveCamera(fov, aspect, 0.1, 8000);
   camera.position.set(-40, 30, 360);
   camera.lookAt(0, 10, 330);
@@ -405,9 +415,11 @@ export function createRenderer(canvas, world) {
     camera.aspect = a;
     chaseCamera.aspect = a;
     cockpitCamera.aspect = a;
+    deckCamera.aspect = a;
     camera.updateProjectionMatrix();
     chaseCamera.updateProjectionMatrix();
     cockpitCamera.updateProjectionMatrix();
+    deckCamera.updateProjectionMatrix();
   }
 
   if (typeof window !== 'undefined' && window.addEventListener) {
@@ -467,6 +479,20 @@ export function createRenderer(canvas, world) {
     tmpEye.applyEuler(tmpEuler);
     cockpitCamera.position.copy(state.position).add(tmpEye);
     cockpitCamera.quaternion.setFromEuler(tmpEuler);
+  }
+
+  // Where the deck camera wants to be: low by the runway threshold,
+  // just off the strip's edge, tracking the plane as it comes in —
+  // the LSO view. Fixed ground position, so the plane grows in the
+  // frame on final and the runway lead-in fills the foreground.
+  function updateDeckCamera(state) {
+    const rw = WORLD.runway;
+    deckCamera.position.set(
+      rw.touchdownZoneStart + 40,
+      WORLD.runwayAltitude + 3,
+      rw.z - 26
+    );
+    deckCamera.lookAt(state.position.x, state.position.y, state.position.z);
   }
 
   function triggerShake(amount) {
@@ -537,6 +563,18 @@ export function createRenderer(canvas, world) {
       zenith.lerp(new THREE.Color(0x3a1e6e), duskW * 0.55);
       sunCol.lerp(new THREE.Color(0xff6a1a), duskW * 0.4);
     }
+    // R2-4 — storm grade: the boss storm darkens the whole sky on
+    // top of the day-night keyframes (slate horizon/zenith, dimmer
+    // sun, lower exposure, weaker glow), so the arena reads as a
+    // storm cell, not a bright dusk. The weather module eases its
+    // intensity in and out; this grade follows it every frame.
+    const storm = weather ? weather.intensity : 0;
+    if (storm > 0.01) {
+      horizon.lerp(new THREE.Color(0x4a5568), storm * 0.7);
+      zenith.lerp(new THREE.Color(0x1a2233), storm * 0.7);
+      sunCol.lerp(new THREE.Color(0x8a94a8), storm * 0.6);
+      sun.intensity *= 1 - storm * 0.55;
+    }
     hemi.color.copy(zenith);
     hemi.groundColor.copy(lerpHex(0xe8cf9a, 0x1a2436, nightFactor));
     hemi.intensity = num('hemi');
@@ -551,14 +589,15 @@ export function createRenderer(canvas, world) {
     scene.fog.far = (atm0.fogFar || 2600) - duskW * 550;
     paintSkyDome(skyDome, horizon.getHex(), zenith.getHex());
     if ('toneMappingExposure' in renderer) {
-      renderer.toneMappingExposure = num('exposure') + duskW * 0.06;
+      // Storm grade (R2-4): lower exposure while the storm is on.
+      renderer.toneMappingExposure = num('exposure') + duskW * 0.06 - storm * 0.2;
     }
     // Sun glow + disc follow the sun; at night they become a pale
     // moon (small disc, faint cool glow) instead of vanishing.
     sunGlow.position.set(dir.x * 3200, dir.y * 3200, dir.z * 3200);
     sunStreak.position.set(dir.x * 3200, dir.y * 3200, dir.z * 3200);
-    streakMat.opacity = num('glow') * 0.55;
-    glowMat.opacity = num('glow');
+    streakMat.opacity = num('glow') * 0.55 * (1 - storm * 0.7);
+    glowMat.opacity = num('glow') * (1 - storm * 0.7);
     glowMat.color.copy(sunCol);
     sunDisc.position.set(dir.x * 3300, dir.y * 3300, dir.z * 3300);
     sunDisc.lookAt(0, 0, 0);
@@ -601,7 +640,14 @@ export function createRenderer(canvas, world) {
     camera,
     chaseCamera,
     cockpitCamera,
+    deckCamera,
     effects,
+    weather,
+    // Storm on/off: the boss finale turns the weather on; leaving
+    // the sortie (menu, other missions) turns it back off.
+    setStorm(on) {
+      if (weather) weather.setActive(!!on);
+    },
     // Day-night cycle: pin or read the game clock (hours, 0..24)
     // and how night it is (0 = day, 1 = full night).
     setTimeOfDay,
@@ -619,12 +665,13 @@ export function createRenderer(canvas, world) {
     },
 
     setView(name) {
-      if (name !== 'cockpit' && name !== 'chase') return;
+      if (name !== 'cockpit' && name !== 'chase' && name !== 'deck') return;
       if (name !== view) {
         view = name;
         // H5: hide the prop (blades + tips + blur disc) from the
         // pilot's own eye — in H4 it read as a grey pillar up the
-        // middle of the cockpit frame.
+        // middle of the cockpit frame. Deck-cam is an outside view,
+        // so the prop stays visible there.
         if (aircraft && typeof aircraft.setCockpit === 'function') {
           aircraft.setCockpit(name === 'cockpit');
         }
@@ -762,18 +809,30 @@ export function createRenderer(canvas, world) {
         }
       }
 
-      // Aim both virtual cameras, then glide the real camera toward the
+      // Aim all virtual cameras, then glide the real camera toward the
       // active one: position lerp + quaternion slerp, frame-rate safe.
       // On the first frame (or after snap()) jump straight there.
       updateChaseCamera(st, dt);
       updateCockpitCamera(st);
-      const active = view === 'cockpit' ? cockpitCamera : chaseCamera;
+      updateDeckCamera(st);
+      const active =
+        view === 'cockpit'
+          ? cockpitCamera
+          : view === 'deck'
+            ? deckCamera
+            : chaseCamera;
       if (snapNext) {
         camera.position.copy(active.position);
         camera.quaternion.copy(active.quaternion);
         snapNext = false;
       } else {
-        const k = 1 - Math.exp(-dt * 7);
+        // Cockpit: the eye is rigidly attached to the plane, so track
+        // it fast (rate 60/s, steady lag under a metre at full speed).
+        // The chase glide rate (7/s) would trail ~8 m behind a
+        // 55 m/s plane and show the tail fin dead centre instead of
+        // the view ahead. Chase and deck keep the slow glide.
+        const rate = view === 'cockpit' ? 60 : 7;
+        const k = 1 - Math.exp(-dt * rate);
         camera.position.lerp(active.position, k);
         camera.quaternion.slerp(active.quaternion, k);
       }
@@ -801,9 +860,11 @@ export function createRenderer(canvas, world) {
         camera.fov = fovApplied;
         chaseCamera.fov = fovApplied;
         cockpitCamera.fov = fovApplied;
+        deckCamera.fov = fovApplied;
         camera.updateProjectionMatrix();
         chaseCamera.updateProjectionMatrix();
         cockpitCamera.updateProjectionMatrix();
+        deckCamera.updateProjectionMatrix();
       }
       if (speedRatio > 0.85) {
         const tremble = 0.12 * ((speedRatio - 0.85) / 0.15);
@@ -853,6 +914,11 @@ export function createRenderer(canvas, world) {
       // streaks) run last on purpose: the streaks and the contrail
       // ribbons face the final, shake-adjusted camera.
       if (effects) effects.update(dt, st, camera);
+
+      // Storm weather (rain, lightning, gusts, cell, fog grade) runs
+      // after the effects, so its fog grade wins over the in-cloud
+      // fog while the storm is active.
+      if (weather) weather.update(dt, st, camera);
 
       // The frame goes through the post pass (grade in WebGL, so the
       // canvas — and every screenshot of it — carries the final look).

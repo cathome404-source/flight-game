@@ -107,7 +107,7 @@ if (hangarCloseBtn) hangarCloseBtn.addEventListener('click', closeHangar);
 
 const state = {
   screen: 'menu', // menu | playing | paused | crashed | complete
-  view: 'chase', // chase | cockpit
+  view: 'chase', // chase | cockpit | deck
   seed,
   muted: false,
   shot: null,
@@ -151,6 +151,24 @@ function formatGameHour(h) {
   return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
 }
 
+// ---- Storm wiring: weather.js fires thunder a beat after each
+// lightning flash; the frame loop (below) feeds the gust vector into
+// the flight model while the boss sortie is active.
+if (render.weather) {
+  render.weather.onThunder = () => audio.thunder();
+}
+
+// True while the boss finale is being flown: the storm (rain,
+// lightning, gusts) is on only then — never in other sorties or
+// free flight.
+function stormActive() {
+  return !!(
+    missions.current &&
+    missions.current.id === 'boss' &&
+    missions.status === 'active'
+  );
+}
+
 // ---- Live score for the HUD: missions.score is only finalised on
 // completion, so the running total is rebuilt from what was collected.
 function liveScore() {
@@ -158,7 +176,7 @@ function liveScore() {
   const s = TUNING.scoring;
   return (
     missions.ringsPassed * s.ringPoints +
-    missions.stormPassed * s.ringPoints +
+    (missions.stormPassed || 0) * s.ringPoints +
     missions.checkpointsVisited * s.checkpointPoints
   );
 }
@@ -197,6 +215,9 @@ function combinedHudState() {
     stalled: fs.stalled,
     damage: fs.damage,
     wind: fs.wind,
+    // Storm gust for the HUD wind arrow (0 outside the boss sortie).
+    gust: fs.gust,
+    storm: stormActive(),
     pitchDeg: fs.pitchDeg,
     bankDeg: fs.bankDeg,
     gearDown: fs.gearDown,
@@ -294,15 +315,26 @@ missions.onComplete = (info) => {
   audio.engine(false);
   const coins = campaign.award(info);
   const coinText = coins > 0 ? '  ·  +' + coins + ' koin' : '';
-  hud.showBanner('Mission Complete!', info.mission.name + ' — Score ' + info.score + coinText);
+  // Boss finale: completing sortie 12 closes the whole campaign.
+  const isBoss = info.mission.id === 'boss';
+  hud.showBanner(
+    isBoss ? 'Kampanye Selesai!' : 'Mission Complete!',
+    isBoss
+      ? 'Badai Leviathan ditaklukkan — 8 ring badai di tengah badai!' + coinText
+      : info.mission.name + ' — Score ' + info.score + coinText
+  );
   setTimeout(() => {
     if (state.screen !== 'playing') return;
-    showEnd('Mission Complete', [
+    const lines = [
       info.mission.name + ' complete!',
       'Score <b>' + info.score + '</b>' + (info.newBest ? ' — new best!' : '') +
         (coins > 0 ? '  ·  <b>+' + coins + ' koin</b> (saldo ' + campaign.coins + ')' : ''),
       'Time ' + formatClock(info.time) + '  ·  Best <b>' + info.best + '</b>',
-    ], 'complete');
+    ];
+    if (isBoss) {
+      lines.push('🏆 Kampanye Garuda Skies selesai — semua 12 sortie ditaklukkan!');
+    }
+    showEnd(isBoss ? 'Kampanye Selesai!' : 'Mission Complete', lines, 'complete');
   }, 1800);
 };
 
@@ -378,9 +410,12 @@ function toMenu() {
   if (hangar) hangar.hide();
   gameHour = START_HOUR;
   render.setTimeOfDay(gameHour);
+  render.setStorm(false);
   audio.engine(false);
   audio.setSpeed(0);
   audio.setWind(0);
+  audio.setRain(0);
+  hud.setRain(false);
   hud.setCockpit(false);
   flight.reset();
   setView('chase');
@@ -498,7 +533,15 @@ function frame(now) {
     }
   }
   if (input.takePressed('KeyC') && state.screen === 'playing' && !state.posed) {
-    setView(state.view === 'cockpit' ? 'chase' : 'cockpit');
+    // C toggles chase <-> cockpit; from the deck-cam it returns to chase.
+    setView(state.view === 'deck' ? 'chase' : state.view === 'cockpit' ? 'chase' : 'cockpit');
+  }
+  // Deck-cam (V): a low camera by the runway threshold watching the
+  // plane come in (LSO-style). V again returns to the chase camera.
+  // Works in every sortie, not just the boss.
+  if (input.takePressed('KeyV') && state.screen === 'playing' && !state.posed) {
+    setView(state.view === 'deck' ? 'chase' : 'deck');
+    hud.showMessage(state.view === 'deck' ? 'Deck-cam' : 'Chase cam');
   }
   // Barrel roll: Q rolls left, E rolls right — one full 360-degree roll
   // while flying. flight.startBarrelRoll guards the rest (flying only,
@@ -524,6 +567,21 @@ function frame(now) {
   if (look.dx !== 0 || look.dy !== 0) render.addLook(look.dx, look.dy);
 
   if (state.screen === 'playing' && !state.posed) {
+    // Storm (boss finale only): turn the weather on, feed its gust
+    // vector into the flight model before the physics step, and run
+    // the rain audio. Outside the boss sortie everything is off.
+    const storm = stormActive();
+    render.setStorm(storm);
+    if (storm && render.weather) {
+      const g = render.weather.gust();
+      flight.setGust(g.x, g.z, g.strength);
+      audio.setRain(0.85);
+    } else {
+      flight.setGust(0, 0, 0);
+      audio.setRain(0);
+    }
+    // Rain on the cockpit glass: only in cockpit view, only in the storm.
+    hud.setRain(storm && state.view === 'cockpit');
     // Arcade pitch: input.js already maps ArrowUp/W to nose up (+1),
     // the same sign flight.js expects — passed through untouched.
     flight.update(dt, input);

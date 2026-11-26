@@ -286,6 +286,9 @@ export function createMissions(flight, world, config) {
         if (def.id === 'crosswind') {
           line += ' Angin dari barat mendorong ke timur →';
         }
+        if (def.id === 'boss') {
+          line += ' Badai Leviathan — hujan, petir, hembusan kuat! Ikuti panah angin di bawah kompas.';
+        }
         if (def.id === 'chase') {
           const pct = def.timeLimit > 0
             ? Math.min(99, Math.round((api.elapsed / def.timeLimit) * 100))

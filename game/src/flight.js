@@ -153,6 +153,9 @@ export function createFlight(world, aircraft, config) {
     pitchDeg: 0,
     wind: 0,
     time: 0,
+    // Storm gust vector (m/s, world xz) plus its strength, fed by
+    // weather.js through setGust. Zero outside the storm.
+    gust: { x: 0, z: 0, strength: 0 },
     // Landing gear: down on the ground, retractable in flight.
     // gearDown is the commanded position; gearDeploy 0..1 is the
     // animated position (1 = fully down, 0 = fully up).
@@ -177,6 +180,7 @@ export function createFlight(world, aircraft, config) {
     { name: 'canyonRings', defs: cfgWorld.canyonRings || [], kind: 'ring' },
     { name: 'timeTrialRings', defs: cfgWorld.timeTrialRings || [], kind: 'ring' },
     { name: 'chaseGates', defs: cfgWorld.chaseGates || [], kind: 'ring' },
+    { name: 'bossRings', defs: cfgWorld.bossRings || [], kind: 'ring' },
     { name: 'nightCheckpoints', defs: cfgWorld.nightCheckpoints || [], kind: 'checkpoint' },
   ].map((set) => ({ ...set, armed: set.defs.map(() => true) }));
 
@@ -220,6 +224,14 @@ export function createFlight(world, aircraft, config) {
 
     setWind(mps) {
       state.wind = Math.max(0, mps || 0);
+    },
+
+    // Storm gust vector (m/s, world xz) from weather.js. The push is
+    // applied in update() while flying; the HUD reads state.gust.
+    setGust(gx, gz, strength) {
+      state.gust.x = gx || 0;
+      state.gust.z = gz || 0;
+      state.gust.strength = Math.max(0, strength || 0);
     },
 
     // Retune the flight model from the selected aircraft's stats
@@ -329,6 +341,9 @@ export function createFlight(world, aircraft, config) {
       state.pitchDeg = 0;
       state.wind = 0;
       state.time = 0;
+      state.gust.x = 0;
+      state.gust.z = 0;
+      state.gust.strength = 0;
       state.gearDown = true;
       state.gearDeploy = 1;
       wasStalled = false;
@@ -515,6 +530,23 @@ export function createFlight(world, aircraft, config) {
           state.position.x += state.wind * gust * dt;
           state.position.z += state.wind * 0.3 * Math.sin(state.time * 0.9) * dt;
         }
+        // --- Storm gusts (boss finale): a real physical push. The
+        // gust vector shoves the plane sideways and yaws the nose
+        // when it hits across the flight path, so the pilot must fly
+        // against it — a gust from the side is a crab angle, not a
+        // camera effect. On the ground gusts do nothing. Near the
+        // ground and at low speed the push is damped (the surface
+        // boundary layer): at rotation speed a full-strength gust
+        // would yaw the plane straight off the strip into the grass
+        // cone before the wing can climb away. At cruise speed the
+        // full gust bites.
+        if (state.gust.strength > 0.1) {
+          const gustFactor = clamp(state.speed / 45, 0.3, 1);
+          state.position.x += state.gust.x * gustFactor * dt;
+          state.position.z += state.gust.z * gustFactor * dt;
+          const cross = state.gust.x * fz - state.gust.z * fx;
+          state.yaw -= (cross / Math.max(20, state.speed)) * 0.35 * gustFactor * dt;
+        }
       } else {
         // --- On the ground: roll along the runway heading, nose level.
         state.pitch = 0;
@@ -544,7 +576,11 @@ export function createFlight(world, aircraft, config) {
         ) {
           state.status = 'flying';
           state.pitch = Math.max(state.pitch, 6 * DEG);
-          state.position.y = terrainHeightAt(state.position.x, state.position.z) + 0.5;
+          // +2 m of clearance on rotation (was +0.5): the strip's
+          // grass cone rises just past the edge, and a plane that
+          // rotates at minimum speed used to clip it the moment a
+          // gust nudged it off the asphalt.
+          state.position.y = terrainHeightAt(state.position.x, state.position.z) + 2;
         }
       }
 

@@ -264,6 +264,25 @@ export const WORLD = {
     { x: 850, z: 1120, y: 130, radius: 18 },
     { x: 950, z: 1150, y: 150, radius: 18 },
   ],
+  // Boss finale rings: a loop over the open sea inside the storm cell,
+  // 8 rings in order. The route flows out of the takeoff heading
+  // (east, then curving north and back west) so the first ring is a
+  // gentle turn, not a 95-degree snap right after rotation — the
+  // storm is the challenge, not the route. Heights 70–120 m keep
+  // every ring well above the water and clear of every island cone.
+  bossRings: [
+    { x: 300, z: 300, y: 80, radius: 18 },
+    { x: 600, z: -200, y: 100, radius: 18 },
+    { x: 600, z: -1100, y: 120, radius: 18 },
+    { x: 0, z: -1400, y: 110, radius: 18 },
+    { x: -700, z: -1300, y: 90, radius: 18 },
+    { x: -1100, z: -900, y: 80, radius: 18 },
+    { x: -900, z: -400, y: 70, radius: 18 },
+    { x: -300, z: -100, y: 90, radius: 18 },
+  ],
+  // The storm cell itself: centre + radius of the dark cloud mass
+  // (weather.js) and the arena the boss rings loop through.
+  stormCell: { x: -300, z: -800, radius: 900 },
   // Stranded boat for the rescue sortie: open sea between Garuda and
   // Kelapa, so the low pass happens over water, not over land.
   rescueBoat: { x: -650, z: 250 },
@@ -338,8 +357,8 @@ export const WORLD = {
   },
 };
 
-// R2 campaign sorties 1–11 (sortie 12, the boss finale, is defined in
-// campaign.js only — its mechanics land in R2-4). Fields: kind drives
+// R2 campaign sorties 1–12 (sortie 12 is the boss finale — its storm
+// mechanics live in weather.js, wired in R2-4). Fields: kind drives
 // the mission logic in missions.js; ringSet / checkpointSet name the
 // WORLD list the sortie flies; coins is the campaign reward; targetScore
 // is the score to beat; startHour pins the time of day (night sortie);
@@ -442,6 +461,15 @@ export const MISSIONS = [
     ringCount: 10,
     timeLimit: 180, parTime: 140, wind: 2, allowRefuel: false,
     coins: 350, targetScore: 2800,
+  },
+  {
+    id: 'boss', kind: 'rings', ringSet: 'bossRings',
+    name: 'Badai Leviathan',
+    short: 'Finale: 8 ring badai',
+    objective: 'Finale: terbang melewati 8 ring badai di tengah sel badai — hujan deras, petir, hembusan kuat mendorong pesawat.',
+    ringCount: 8,
+    timeLimit: 240, parTime: 170, wind: 12, startHour: 19.0,
+    coins: 500, targetScore: 3500,
   },
 ];
 

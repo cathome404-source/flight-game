@@ -1,8 +1,8 @@
 // Garuda Skies — campaign: 12 sorties in 3 acts, unlock order, coins.
-// Written fresh from the R2 prose spec. Sorties 1–11 map onto the
-// playable missions in config.js; sortie 12 (Badai Leviathan) is DATA
-// ONLY here — its storm mechanics are built in R2-4, so it stays locked
-// until sortie 11 is finished and can never be started from this file.
+// Written fresh from the R2 prose spec. Sorties 1–12 map onto the
+// playable missions in config.js; sortie 12 (Badai Leviathan) is the
+// boss finale, wired to its storm mechanics in R2-4, and unlocks
+// after sortie 11 is finished.
 //
 // THE SAVE (contract for later sessions — R2-5 refits, medals): one
 // localStorage key holding exactly this shape:
@@ -137,8 +137,7 @@ export const SORTIES = [
   { n: 9, act: 2, missionId: 'storm', name: 'Badai Datang', objective: '6 ring melawan waktu di badai.', coins: 250, targetScore: 1800 },
   { n: 10, act: 2, missionId: 'rescue', name: 'Penyelamatan', objective: 'Lewat pelan di atas kapal, lalu mendarat.', coins: 300, targetScore: 1200 },
   { n: 11, act: 2, missionId: 'timetrial', name: 'Ujian Waktu', objective: '10 ring, jam ketat, tanpa refuel.', coins: 350, targetScore: 2800 },
-  // Boss finale — data only. No mission id, no mechanics: R2-4 builds it.
-  { n: 12, act: 2, missionId: null, name: 'Badai Leviathan', objective: 'Finale: 8 ring badai di tengah sel badai. Selesaikan sortie 11 untuk membuka.', coins: 500, targetScore: 3500 },
+  { n: 12, act: 2, missionId: 'boss', name: 'Badai Leviathan', objective: 'Finale: 8 ring badai di tengah sel badai. Selesaikan sortie 11 untuk membuka.', coins: 500, targetScore: 3500 },
 ];
 
 // Mission index (into MISSIONS) for a sortie number, or -1 for the boss.
@@ -218,11 +217,10 @@ export function createCampaign(missions) {
     },
 
     // Sortie n (1..12) may be started when every earlier sortie is
-    // done. The boss (12) additionally needs a real mission, which
-    // does not exist yet — it is never startable from this session.
+    // done. The boss (12) opens once sortie 11 is finished, like any
+    // other sortie — its mission now exists (R2-4).
     isUnlocked(n) {
       if (n <= 1) return true;
-      if (n === 12) return false;
       const idx = missionIndexForSortie(n);
       if (idx < 0) return false;
       return missions ? missions.isUnlocked(idx) : false;
