@@ -394,6 +394,10 @@ export function createRenderer(canvas, world) {
   let fovApplied = FOV_BASE;
   let prevDamage = 0;
   let crashShakeDone = false;
+  // R2-10 shot-mode sun-glare scale (1 = normal play): the cover
+  // pose flies toward the low sun, and the full glare + streak blows
+  // the plane white. Shots set it <1; normal play never touches it.
+  let shotGlare = 1;
   // True until the first frame (or after snap()): the camera jumps
   // straight to the active view instead of gliding across the map.
   // Headless screenshots only render a handful of frames, so without
@@ -558,29 +562,53 @@ export function createRenderer(canvas, world) {
     sun.position.set(dir.x * 900, dir.y * 900, dir.z * 900);
     sun.color.copy(sunCol);
     sun.intensity = num('sunIntensity');
-    // Dusk boost (R2-3): near hour 19 the horizon deepens to a hot
-    // orange and the zenith to violet, so the sunset gradient reads
-    // orange-to-purple instead of washing out to pale pink. The
-    // keyframes in config stay untouched — this is a render-side
-    // grade on top of them.
-    const duskW = Math.exp(-Math.pow((h - 19) / 1.7, 2)) * (1 - nightFactor);
-    if (duskW > 0.01) {
-      horizon.lerp(new THREE.Color(0xff5e14), duskW * 0.55);
-      zenith.lerp(new THREE.Color(0x3a1e6e), duskW * 0.55);
-      sunCol.lerp(new THREE.Color(0xff6a1a), duskW * 0.4);
-    }
     // R2-4 — storm grade: the boss storm darkens the whole sky on
     // top of the day-night keyframes (slate horizon/zenith, dimmer
     // sun, lower exposure, weaker glow), so the arena reads as a
     // storm cell, not a bright dusk. The weather module eases its
     // intensity in and out; this grade follows it every frame.
+    // (R2-10: read the storm level BEFORE the dusk boost, so a full
+    // storm suppresses the hot-orange dusk grade instead of fighting
+    // it — the old order let dusk pink survive under the storm.)
     const storm = weather ? weather.intensity : 0;
-    if (storm > 0.01) {
-      horizon.lerp(new THREE.Color(0x4a5568), storm * 0.7);
-      zenith.lerp(new THREE.Color(0x1a2233), storm * 0.7);
-      sunCol.lerp(new THREE.Color(0x8a94a8), storm * 0.6);
-      sun.intensity *= 1 - storm * 0.55;
+    // Dusk boost (R2-3): near hour 19 the horizon deepens to a hot
+    // orange and the zenith to violet, so the sunset gradient reads
+    // orange-to-purple instead of washing out to pale pink. The
+    // keyframes in config stay untouched — this is a render-side
+    // grade on top of them.
+    const duskW = Math.exp(-Math.pow((h - 19) / 1.7, 2)) * (1 - nightFactor) * (1 - storm * 0.85);
+    if (duskW > 0.01) {
+      horizon.lerp(new THREE.Color(0xff5e14), duskW * 0.55);
+      zenith.lerp(new THREE.Color(0x3a1e6e), duskW * 0.55);
+      sunCol.lerp(new THREE.Color(0xff6a1a), duskW * 0.4);
     }
+    if (storm > 0.01) {
+      // R2-10: stronger storm sky lerp (0.85/0.9 vs 0.7) — the old
+      // weights left a pink dusk band under the storm.
+      horizon.lerp(new THREE.Color(0x4a5568), storm * 0.85);
+      zenith.lerp(new THREE.Color(0x1a2233), storm * 0.9);
+    }
+    // R2-10b: dim the (Lambert) cloud layers with the storm too —
+    // the sky dome darkened but the cream cloud puffs stayed
+    // bright, and they are the biggest sky area in the boss frame.
+    // Runs at every storm level INCLUDING 0, so leaving the storm
+    // restores full brightness instead of leaving dimmed clouds.
+    {
+      const cloudDim = 1 - storm * 0.55;
+      if (world && world.cloudLayers) {
+        for (const layer of world.cloudLayers) {
+          if (layer && layer.material && layer.material.color) {
+            layer.material.color.setScalar(cloudDim);
+          }
+        }
+      }
+      if (world && world.cloudBlobs && world.cloudBlobs.material && world.cloudBlobs.material.color) {
+        world.cloudBlobs.material.color.setScalar(cloudDim);
+      }
+    }
+    // Sun colour/intensity follow the storm at any level (0 = no-op).
+    sunCol.lerp(new THREE.Color(0x8a94a8), storm * 0.6);
+    sun.intensity *= 1 - storm * 0.55;
     hemi.color.copy(zenith);
     hemi.groundColor.copy(lerpHex(0xe8cf9a, 0x1a2436, nightFactor));
     hemi.intensity = num('hemi');
@@ -595,15 +623,16 @@ export function createRenderer(canvas, world) {
     scene.fog.far = (atm0.fogFar || 2600) - duskW * 550;
     paintSkyDome(skyDome, horizon.getHex(), zenith.getHex());
     if ('toneMappingExposure' in renderer) {
-      // Storm grade (R2-4): lower exposure while the storm is on.
-      renderer.toneMappingExposure = num('exposure') + duskW * 0.06 - storm * 0.2;
+      // Storm grade (R2-4): lower exposure while the storm is on
+      // (R2-10: -0.3, was -0.2 — the still kept reading as dusk).
+      renderer.toneMappingExposure = num('exposure') + duskW * 0.06 - storm * 0.3;
     }
     // Sun glow + disc follow the sun; at night they become a pale
     // moon (small disc, faint cool glow) instead of vanishing.
     sunGlow.position.set(dir.x * 3200, dir.y * 3200, dir.z * 3200);
     sunStreak.position.set(dir.x * 3200, dir.y * 3200, dir.z * 3200);
-    streakMat.opacity = num('glow') * 0.55 * (1 - storm * 0.7);
-    glowMat.opacity = num('glow') * (1 - storm * 0.7);
+    streakMat.opacity = num('glow') * 0.55 * (1 - storm * 0.7) * shotGlare;
+    glowMat.opacity = num('glow') * (1 - storm * 0.7) * shotGlare;
     glowMat.color.copy(sunCol);
     sunDisc.position.set(dir.x * 3300, dir.y * 3300, dir.z * 3300);
     sunDisc.lookAt(0, 0, 0);
@@ -616,7 +645,7 @@ export function createRenderer(canvas, world) {
         dir.y * 3200 + (i === 0 ? -120 : 180),
         dir.z * 3200
       );
-      g.material.opacity = (0.28 - i * 0.1) * (1 - nightFactor * 0.85);
+      g.material.opacity = (0.28 - i * 0.1) * (1 - nightFactor * 0.85) * shotGlare;
     }
     stars.material.opacity = nightFactor * 0.9;
     // Blob-shadow geometry follows the new sun elevation/azimuth.
@@ -657,6 +686,11 @@ export function createRenderer(canvas, world) {
     // the sortie (menu, other missions) turns it back off.
     setStorm(on) {
       if (weather) weather.setActive(!!on);
+    },
+    // R2-10: scale the sun glare/streak/ghosts for a posed shot
+    // (0..1, 1 = normal). Shot-mode only; normal play never calls it.
+    setShotGlare(f) {
+      shotGlare = clamp(typeof f === 'number' ? f : 1, 0, 1);
     },
     // Day-night cycle: pin or read the game clock (hours, 0..24)
     // and how night it is (0 = day, 1 = full night).

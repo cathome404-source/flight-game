@@ -664,6 +664,17 @@ if (shots.shotName === 'hangar') {
   hud.setScreen('menu');
   hud.setCockpit(false);
   openHangar();
+  // R2-10: snap the menu camera to the parked plane (without this
+  // the chase camera glides in from (-40,30,360) and the shot can
+  // catch it still far down the runway — the old shot's tiny plane)
+  // and scroll the panel so the ledger + dispatch map + medals are
+  // in frame instead of buried below the fold.
+  render.snap();
+  // (R2-10b: the yaw-orbit try put the parked plane side-on but
+  // half-hidden behind the panel edge and reading as debris —
+  // reverted to the tail-on chase view, which reads as a plane.)
+  const hp = document.querySelector('.hangar-panel');
+  if (hp) hp.scrollTop = Math.max(0, (hp.scrollHeight - hp.clientHeight) * 0.78);
 } else if (shots.shotName) {
   state.shot = shots.shotName;
   state.posed = true;
@@ -761,7 +772,12 @@ function frame(now) {
   } else if (state.screen === 'playing' && state.posed) {
     // Posed for a screenshot: propeller spins, plane never moves.
     // Keep the clock in sync with the pinned render hour.
+    // R2-10: re-apply the grade every frame — the boss storm grade
+    // reads weather.intensity inside setTimeOfDay, and the storm
+    // only reaches full strength after the shot is posed, so a
+    // single call at pose time graded a clear sky.
     gameHour = render.getTimeOfDay();
+    render.setTimeOfDay(gameHour);
     aircraft.setThrottle(flight.state.throttle);
     aircraft.update(dt, { roll: 0, pitch: 0 });
   } else if (state.screen === 'menu') {

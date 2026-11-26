@@ -76,22 +76,30 @@ export function createShots(render, flight, world, missions) {
 
     if (name === 'cover') {
       // H3 — dramatic cover: east of Garuda over open sea, heading
-      // WNW (yaw 62, bearing ~298) so the frame holds the low sun and
-      // its glint path on the left, Merapi Kecil looming on the right,
-      // and rings 2 and 3 in the middle distance. Lower (100 m) at
-      // 70 m/s. Banked 0 deg on purpose: a banked pose turns the plane
-      // while the screenshot waits, and the turn walks the sun out of
-      // the frame; wings-level locks the sun/Merapi composition.
+      // SSW (yaw 25, bearing ~205) so the low sun sits ~60 deg off
+      // the nose — out of frame — instead of dead ahead blowing the
+      // plane white (R2-10 evaluator: sun + afterburner made the
+      // Rajawali a white blob). Throttle 0.7 keeps the afterburner
+      // off in the shot (it wakes past 80%) and the shot glare is
+      // dimmed to 0.25 — shot mode only, normal play untouched.
+      // Merapi Kecil still looms on the right, rings 2 and 3 in the
+      // middle distance ahead (ring line z = 330, plane flying +z).
       startForShot(1, 'free');
-      pose(1650, 100, 100, 62, 0, 70, 0.95, 0);
+      pose(1650, 100, 100, 25, 0, 70, 0.7, 0);
       render.setView('chase');
+      if (render && typeof render.setShotGlare === 'function') render.setShotGlare(0.25);
     } else if (name === 'cockpit') {
       // Cockpit view, ~150 m short of ring 1 (120, 60, 330) so the
       // gold ring + number board fill the view ahead instead of
       // reading as a distant speck; instruments lit, tapes + TAWS live.
+      // R2-10: a small right glance (addLook -60) swings the far
+      // white ring off the right altitude tape — the first try (+60)
+      // swung it ONTO the tape instead. Verified visually, not by
+      // sign reasoning.
       startForShot(1, 'free');
       pose(-30, 65, ringZ, -90, 0, 55, 0.65);
       render.setView('cockpit');
+      if (render && typeof render.addLook === 'function') render.addLook(-60, 0);
     } else if (name === 'boss') {
       // Boss finale (sortie 12): storm on, dusk pinned via ?time=.
       // Rajawali banked 15 deg at 80 m/s, 180 m short of storm ring 1
@@ -103,10 +111,19 @@ export function createShots(render, flight, world, missions) {
       // storm branch in main.js) so setTimeOfDay below picks the
       // overcast env map. (HUD target still names ring 1 — posed
       // staging, no ring flown.)
+      // R2-10: pin the storm — setShotHold forces intensity 1 at
+      // once (posed frames never re-run setTimeOfDay, so the old
+      // eased ramp never darkened the sky), builds one bolt ahead
+      // of the plane and holds it + heavy rain in frame. Throttle
+      // 0.7 keeps the afterburner off so the livery is not blown
+      // out a second time. Normal-play lightning is untouched.
       startForShot(11, 'free');
-      pose(120, 88, 300, -90, 0, 80, 0.9, 15);
+      pose(120, 88, 300, -90, 0, 80, 0.7, 15);
       render.setView('chase');
       if (render && typeof render.setStorm === 'function') render.setStorm(true);
+      if (render && render.weather && typeof render.weather.setShotHold === 'function') {
+        render.weather.setShotHold(flight.state);
+      }
     } else if (name === 'hangar') {
       // Hangar/dispatch screen: no flight pose — the plane stays
       // parked on the runway behind the hangar panel; main.js opens

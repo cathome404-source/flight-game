@@ -121,10 +121,15 @@ export function createWeather(scene) {
   let flash = 0;
   let nextStrikeIn = 2.5;
   let thunderTimer = -1;
+  // Shot hold (R2-10): posed screenshot mode pins one bolt in frame
+  // with the flash held — the random 2–5 s strike + ~1 s decay never
+  // survives a ~1 fps screenshot wait. Normal play never sets this.
   // Gust state: a slow random walk in direction with a pulsing
   // magnitude, so the push comes in waves instead of a constant shove.
   let gustAngle = Math.PI * 0.75;
   let gustStrength = 0;
+
+  let shotHold = false;
 
   const api = {
     onThunder: null,
@@ -148,11 +153,34 @@ export function createWeather(scene) {
       active = !!on;
       targetIntensity = active ? clamp(level === undefined ? 1 : level, 0, 1) : 0;
       if (!active) {
+        shotHold = false;
         rain.visible = false;
         cell.visible = false;
         bolt.visible = false;
         flashLight.intensity = 0;
       }
+    },
+
+    // Shot hold (R2-10, posed screenshots only): storm at full
+    // strength instantly, one bolt built ahead of the posed plane
+    // and held visible with the flash pinned — deterministic, so
+    // the still frame always catches lightning. Normal play is
+    // untouched (random strikes + decaying flash).
+    setShotHold(st) {
+      if (!active) return;
+      targetIntensity = 1;
+      intensity = 1;
+      shotHold = true;
+      if (st && st.position) {
+        lastPos = { x: st.position.x, y: st.position.y, z: st.position.z };
+        const cp = Math.cos(st.pitch || 0);
+        lastForward = {
+          x: -cp * Math.sin(st.yaw || 0),
+          z: -cp * Math.cos(st.yaw || 0),
+        };
+      }
+      buildBolt();
+      flash = 1;
     },
 
     // Current gust vector (m/s, world xz) plus its strength, for the
@@ -215,7 +243,7 @@ export function createWeather(scene) {
         const cx = camera.position.x;
         const cy = camera.position.y;
         const cz = camera.position.z;
-        const len = 2.2 + gustStrength * 0.06;
+        const len = shotHold ? 5 : 2.2 + gustStrength * 0.06;
         for (let i = 0; i < RAIN_COUNT; i++) {
           const d = drops[i];
           d.y -= RAIN_FALL * dt;
@@ -235,7 +263,8 @@ export function createWeather(scene) {
           rainPos[o + 5] = cz + d.z - slantZ * 0.02;
         }
         rainGeo.attributes.position.needsUpdate = true;
-        rainMat.opacity = 0.55 * intensity;
+        // Shot hold: heavier rain reads in a still (0.85 vs 0.55).
+        rainMat.opacity = shotHold ? 0.85 : 0.55 * intensity;
       }
 
       // --- Lightning: strikes arrive every 2–5 s at full storm.
@@ -243,7 +272,7 @@ export function createWeather(scene) {
       // flash decays over ~1 s (not a single blink) with one
       // secondary flicker, so a screenshot has a real chance of
       // catching a strike instead of needing frame-perfect timing.
-      if (on) {
+      if (on && !shotHold) {
         nextStrikeIn -= dt;
         if (nextStrikeIn <= 0) {
           nextStrikeIn = 2 + Math.random() * 3;
@@ -259,7 +288,18 @@ export function createWeather(scene) {
           if (api.onThunder) api.onThunder();
         }
       }
-      if (flash > 0) {
+      if (shotHold) {
+        // Pinned bolt: flash held, bolt fully opaque, flash light
+        // LOW (0.6, not the 3.2 strike peak): the flash is a
+        // directional light from above, and at 1.8 it flooded the
+        // (Lambert) clouds bright cream and defeated the whole
+        // storm darkening. The bolt lines themselves carry the
+        // lightning read against the darkened sky.
+        flash = 1;
+        flashLight.intensity = 0.6 * intensity;
+        boltMat.opacity = 1;
+        bolt.visible = true;
+      } else if (flash > 0) {
         flash *= Math.exp(-dt * 4);
         if (flash < 0.02) flash = 0;
         // Secondary flicker: a brief re-brightening mid-decay.
@@ -283,7 +323,9 @@ export function createWeather(scene) {
             color: scene.fog.color.clone(),
           };
         }
-        const w = intensity * 0.6;
+        // R2-10 shot hold: grade the fog harder toward storm slate
+        // (0.85 vs 0.6) so the arena reads dark even in a still.
+        const w = intensity * (shotHold ? 0.85 : 0.6);
         scene.fog.far = lerp(scene.fog.far, 1300, intensity * 0.7);
         scene.fog.near = lerp(scene.fog.near, 120, intensity * 0.5);
         scene.fog.color.copy(fogBase.color).lerp(STORM_FOG, w);
@@ -312,8 +354,13 @@ export function createWeather(scene) {
     let sx;
     let sz;
     if (lastPos && lastForward) {
-      const along = 250 + Math.random() * 350;
-      const lat = (Math.random() - 0.5) * 500;
+      // Shot hold: strike CLOSE (130–280 m ahead) so the bolt is
+      // big in frame — the normal 250–600 m strike reads as a thin
+      // zigzag at the frame edge in a still.
+      const along = shotHold
+        ? 130 + Math.random() * 150
+        : 250 + Math.random() * 350;
+      const lat = (Math.random() - 0.5) * (shotHold ? 360 : 500);
       // Right vector for a forward (fx, fz) in xz: (-fz, fx).
       sx = lastPos.x + lastForward.x * along + -lastForward.z * lat;
       sz = lastPos.z + lastForward.z * along + lastForward.x * lat;
