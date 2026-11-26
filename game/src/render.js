@@ -184,6 +184,13 @@ export function createRenderer(canvas, world) {
   const tmpTarget = new THREE.Vector3();
   const tmpEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
+  // Damped chase eye: the chase camera's position trails its ideal spot
+  // with a lag, so turns and climbs feel smooth instead of locked-on.
+  const chaseEye = new THREE.Vector3(-40, 30, 360);
+  // Ambient clock: drives the sea swell even on the menu screen, where
+  // the flight clock is frozen.
+  let ambientTime = 0;
+
   function resize() {
     const w = (canvas && canvas.clientWidth) || window.innerWidth || 1280;
     const h = (canvas && canvas.clientHeight) || window.innerHeight || 800;
@@ -204,7 +211,7 @@ export function createRenderer(canvas, world) {
 
   // Where the chase camera wants to be: behind and above the plane,
   // swung by the mouse-look offsets, never fighting the pilot's heading.
-  function updateChaseCamera(state) {
+  function updateChaseCamera(state, dt) {
     const yawEff = (state.yaw || 0) + lookYaw;
     const pitchEff = clamp((state.pitch || 0) + lookPitch * 0.5, -0.6, 0.6);
     const back = new THREE.Vector3(
@@ -212,10 +219,17 @@ export function createRenderer(canvas, world) {
       -Math.sin(pitchEff),
       Math.cos(yawEff) * Math.cos(pitchEff)
     );
-    chaseCamera.position
-      .copy(state.position)
-      .addScaledVector(back, camCfg.chaseDistance);
-    chaseCamera.position.y += camCfg.chaseHeight;
+    // Ideal chase spot, then the damped eye eases toward it (dt-scaled,
+    // ~5/s): the camera trails the plane through turns instead of
+    // snapping to its tail. On snap the eye jumps straight there.
+    tmpEye.copy(state.position).addScaledVector(back, camCfg.chaseDistance);
+    tmpEye.y += camCfg.chaseHeight;
+    if (snapNext) {
+      chaseEye.copy(tmpEye);
+    } else {
+      chaseEye.lerp(tmpEye, 1 - Math.exp(-(dt || 0.016) * 5));
+    }
+    chaseCamera.position.copy(chaseEye);
     forwardOf(state, tmpForward);
     tmpTarget
       .copy(state.position)
@@ -287,6 +301,7 @@ export function createRenderer(canvas, world) {
 
     update(dt, state) {
       dt = Math.min(dt || 0.016, 0.05);
+      ambientTime += dt;
       const st = state || {};
       const pos = st.position || { x: 0, y: 10, z: 0 };
 
@@ -315,6 +330,22 @@ export function createRenderer(canvas, world) {
         }
       }
 
+      // Sea swell: the water surface breathes with slow sine waves,
+      // written from the rest positions stored on the sea mesh.
+      if (world && world.sea && world.sea.userData.basePositions) {
+        const posAttr = world.sea.geometry.attributes.position;
+        const base = world.sea.userData.basePositions;
+        const t = ambientTime;
+        for (let i = 0; i < posAttr.count; i++) {
+          const bx = base[i * 3];
+          const by = base[i * 3 + 1];
+          posAttr.array[i * 3 + 2] =
+            Math.sin(bx * 0.02 + t * 0.9) * 0.55 +
+            Math.cos(by * 0.017 + t * 0.7) * 0.45;
+        }
+        posAttr.needsUpdate = true;
+      }
+
       // Landing light: bright low over the runway, a dim glow elsewhere.
       const rdx = pos.x - WORLD.runway.x;
       const rdz = pos.z - WORLD.runway.z;
@@ -340,7 +371,7 @@ export function createRenderer(canvas, world) {
       // Aim both virtual cameras, then glide the real camera toward the
       // active one: position lerp + quaternion slerp, frame-rate safe.
       // On the first frame (or after snap()) jump straight there.
-      updateChaseCamera(st);
+      updateChaseCamera(st, dt);
       updateCockpitCamera(st);
       const active = view === 'cockpit' ? cockpitCamera : chaseCamera;
       if (snapNext) {

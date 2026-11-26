@@ -16,6 +16,10 @@ export function createInput(target) {
   let lookDx = 0;
   let lookDy = 0;
   let dragging = false;
+  // Smoothed stick: the raw keys snap 0 -> 1 instantly; the flight axes
+  // ease toward the key target instead, so pitch/roll ramp up and down.
+  let smoothPitch = 0;
+  let smoothRoll = 0;
   let lastX = 0;
   let lastY = 0;
 
@@ -88,7 +92,12 @@ export function createInput(target) {
     // Flight axes from the current keys, each in [-1, 1].
     // pitch: +1 nose up, -1 nose down. roll: +1 bank right, -1 bank left.
     // throttle: +1 throttle up, -1 throttle down, 0 untouched.
-    axes() {
+    // Pitch/roll are eased: the stick ramps toward the key target with
+    // an exponential approach (dt-scaled, ~7/s), so pressing a key ramps
+    // the command up and releasing it eases back to level instead of
+    // snapping. Throttle stays raw — flight.js already ramps it at
+    // 0.55/s. dt defaults to one 60fps frame when the caller omits it.
+    axes(dt) {
       let pitch = 0;
       let roll = 0;
       let throttle = 0;
@@ -99,7 +108,10 @@ export function createInput(target) {
       // Throttle shares W/S with pitch, Shift/Ctrl are the dedicated keys.
       if (keys.has('KeyW') || keys.has('ShiftLeft') || keys.has('ShiftRight')) throttle += 1;
       if (keys.has('KeyS') || keys.has('ControlLeft') || keys.has('ControlRight')) throttle -= 1;
-      return { pitch, roll, throttle };
+      const k = 1 - Math.exp(-(dt || 0.016) * 7);
+      smoothPitch += (pitch - smoothPitch) * k;
+      smoothRoll += (roll - smoothRoll) * k;
+      return { pitch: smoothPitch, roll: smoothRoll, throttle };
     },
     // Detach every listener (used when the game is torn down).
     destroy() {

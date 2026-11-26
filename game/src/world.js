@@ -388,12 +388,16 @@ export function buildWorld(rng) {
   group.name = 'world';
 
   // Sea: one big plane, slightly glossy so the low sun glints on it.
+  // Segmented (60x60) so the swell animation can move its vertices
+  // smoothly — 70 units between vertices against a ~300-unit swell.
   const sea = new THREE.Mesh(
-    new THREE.PlaneGeometry(WORLD.seaSize, WORLD.seaSize, 1, 1),
+    new THREE.PlaneGeometry(WORLD.seaSize, WORLD.seaSize, 60, 60),
     phong(PALETTE.sea, { shininess: 90, specular: 0x557788 })
   );
   sea.rotation.x = -Math.PI / 2;
   sea.position.y = 0;
+  // Flat copy of the rest positions: the swell writes heights from these.
+  sea.userData.basePositions = sea.geometry.attributes.position.array.slice();
   group.add(sea);
 
   // A darker deep-water disc in the middle of the sea, for depth at range.

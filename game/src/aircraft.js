@@ -142,6 +142,22 @@ export function makeAircraft() {
   }
   group.add(propeller);
 
+  // Propeller blur disc: a translucent disc in front of the blades that
+  // fades in with RPM, so a fast spin reads as smooth motion instead of
+  // flickering blades.
+  const blurDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(2.95, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0x3a3f45,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  blurDisc.position.set(0, 0, -3.72);
+  group.add(blurDisc);
+
   // --- Landing gear: two fixed wheels with fairings, plus a tail wheel.
   for (const side of [-1, 1]) {
     const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.1, 6), metal);
@@ -204,6 +220,12 @@ export function makeAircraft() {
       const speed = 6 + plane.throttle * 55;
       plane.propAngle = (plane.propAngle + speed * dt) % (Math.PI * 2);
       propeller.rotation.z = plane.propAngle;
+
+      // Blur disc fades in with RPM: invisible at idle, a soft grey disc
+      // at full throttle, eased so the fade itself never pops.
+      const targetBlur = 0.05 + plane.throttle * 0.3;
+      blurDisc.material.opacity +=
+        (targetBlur - blurDisc.material.opacity) * Math.min(1, dt * 4);
 
       // Ailerons deflect opposite each other with the roll input.
       const roll = input.roll || 0;

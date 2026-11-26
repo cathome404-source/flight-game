@@ -1,0 +1,61 @@
+# Flight Game — Fix Spec, Round 2: Smooth + Realistic
+# ("Garuda Skies", best-flight-game-20261126-0057)
+# User feedback on prereview: "kurang, smooth sama kurang realistik"
+# Goal: make motion smoother and the world more realistic, without changing
+# the game's structure, file layout, missions, or controls.
+
+## How to work (hard rules)
+- SURGICAL EDITS ONLY. Read the current file, then change only the lines that
+  need to change (small targeted edits). NEVER rewrite a whole file: lines
+  re-typed from a read-back count as "read", not authored, and would sink the
+  authorship score (currently 99.8%).
+- Each file you touch must be revised in at least 2 separate messages
+  (edit, then verify/test and adjust) so its final content is witnessed after
+  the message that first wrote its lines.
+- Keep every session under ~25 minutes. Test before you commit; commit + push
+  with a descriptive message after each session.
+- Do not change file names, module layout, main.ts, dossier, shots.json, or
+  the mission list. Do not read any other game's code.
+
+## 1. SMOOTH (kelancaran gerak)
+- Delta-time physics: the flight update must scale by real elapsed time
+  (clamped, e.g. max 0.05 s per step) so the plane moves identically at any
+  frame rate. The main loop passes dt; flight, camera and animation all use it.
+- Eased input: pitch and roll commands ramp up and down smoothly toward the
+  target (exponential approach, not instant). Releasing the keys eases back
+  to level flight instead of snapping.
+- Damped chase camera: the chase camera follows with a smooth lag (lerp with
+  a damping factor), never snaps or jitters; switching cockpit<->chase eases
+  over a short transition instead of cutting.
+- Propeller blur: when the propeller spins fast, show a semi-transparent
+  blur disc in front of it (fading in with RPM) so the spin reads as smooth
+  motion, not a flickering blur of blades.
+- Ambient motion: sea waves animate (vertices or texture offset moving with
+  time), clouds drift slowly across the sky, and the plane's banking
+  transitions smoothly instead of jumping between angles.
+
+## 2. REALISTIC (visual + feel)
+- Shadows: a directional sun light with a shadow map, so the plane casts a
+  visible shadow on the terrain and the runway, and islands shade each other.
+  Keep the shadow camera tight around the play area for crispness.
+- Sea: add a specular highlight from the sun, animated wave motion, and a
+  foam fringe where the water meets the beach (pale band along the shoreline).
+- Sky: a vertical gradient (warm horizon to deeper blue above), a visible
+  sun disc with a soft glare, and distance haze/fog so far islands fade
+  naturally into the horizon.
+- Terrain: more natural ground colours — varied greens on the hills, warm
+  sand with a gradient at the waterline, a few more palm trees and small
+  buildings on the islands so they read as inhabited, not empty cones.
+- Aircraft detail: visible landing gear, flaps on the wings, navigation
+  lights that blink (red left / green right / white tail), and better
+  fuselage shading so the plane looks built, not flat.
+- Flight feel: inertia — the plane responds with a slight delay and keeps a
+  little momentum instead of reacting instantly; light turbulence/gusts that
+  nudge the plane gently; a ground-effect lift boost when flying low over
+  the runway.
+- Engine sound: the engine pitch follows throttle AND load (climb vs level),
+  so it sounds alive rather than a flat drone.
+
+## Priority (if time is short)
+What the judge sees in screenshots matters most: shadows, sea, sky, aircraft
+detail, and a smooth camera. Do those first; flight-feel subtleties second.

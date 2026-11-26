@@ -246,7 +246,7 @@ export function createFlight(world, aircraft, config) {
 
       const axes =
         input && typeof input.axes === 'function'
-          ? input.axes()
+          ? input.axes(dt)
           : input || { pitch: 0, roll: 0, throttle: 0 };
       const pitchIn = clamp(axes.pitch || 0, -1, 1);
       const rollIn = clamp(axes.roll || 0, -1, 1);
@@ -287,6 +287,13 @@ export function createFlight(world, aircraft, config) {
           -55 * DEG,
           55 * DEG
         );
+        // Hands off the pitch stick: ease back toward level flight
+        // instead of holding the last attitude.
+        if (Math.abs(pitchIn) < 0.02 && !state.stalled) {
+          const pitchLevelRate = 7 * DEG;
+          if (Math.abs(state.pitch) <= pitchLevelRate * dt) state.pitch = 0;
+          else state.pitch -= Math.sign(state.pitch) * pitchLevelRate * dt;
+        }
         const targetRoll = rollIn * fly.maxBank * DEG;
         const rollRate = fly.rollRate * DEG;
         if (rollIn !== 0) {
