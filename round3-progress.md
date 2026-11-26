@@ -1,0 +1,22 @@
+# Flight Game — Round 3 (H1–H4) Progress
+
+Goal: make graphics feel MORE 3D (user: "grafisnya masih kurang 3d").
+Repo: ~/workspace/makefun/flight-game-01/ — HEAD at round start: 7a90df3
+R1 cutoff: 2026-11-26 19:57 WIB. Round started ~12:41 WIB.
+DO NOT SUBMIT — prereview ulang ke pengguna dulu.
+
+## Sessions
+- [x] H1 terrain relief + depth (world.js, config.js, render.js) — agent 73daa4f5-442c-46dd-abd8-cf13070c9368 — DONE, commit 904668a, usage row written
+- [x] H2 clouds + sea (effects.js, render.js, world.js sea part) — agent 8b762894-03e1-49e4-8894-a82104d23228 — DONE, commit 7707881, usage row written (46 rows total). Clouds FIXED (warm white, no purple). Sea gradient + glint OK. BUT sea moiré lines persist (H2 tested 5 levers, none moved them).
+- [x] H2b sea-line diagnostic + fix (render.js/world.js sea mesh) — DONE, commit e47b5d2, usage row written (47 rows total). Cause = Z-FIGHTING, not swell: swell-0 test (RMS 12.9 vs 12.3 baseline) and shadows-off test (13.1) left lines unchanged; hiding deep disc cut RMS to 8.6, hiding sea cut it to 6.8. Fix: deep-water disc removed + polygonOffset on sea material. Verified cover: sea RMS 12.3 -> 5.6, lines GONE on sand + open sea, swell restored. NOTE: fainter stripes remain on the GRASS slopes (persist with sea hidden) — terrain-local, separate cause, for H3.
+- [x] H3 3D detail volume + camera/shot poses (world.js palms/huts/rocks/vegetation/terrain, shots.js cover, render.js chase cam + sun disc, aircraft.js prop blur) — agent 72be6d5d-5624-4a80-a5c0-acb988573d18 — DONE, commit b4d9966 (pushed), usage row written (48 rows total). Verified: cover v2 (bank 0) — plane big/wings-level in frame, Merapi looming right with ring 3 + checkpoint beam, sun-glint path strong on sea left, grass-slope stripes GONE (smooth shading + rim floor 2.05 + polygonOffset). Cover bank set to 0: banked pose turns the plane while the screenshot waits and walks the sun out of frame. Sun disc itself still faint vs pale sky (bumped 55→95) — glint carries the sun read. Prop blur disc ceiling 0.35→0.12 (was a grey bubble with the closer camera; rings re-shot confirms faint haze). Cockpit/rings/landing re-shots in ~/workspace/h3-verify/ (server script there too — /tmp was wiped by a VM deployment mid-session, which also killed the first screenshot batch).
+- [x] H4 re-screenshot + re-check + re-bundle (shots, main.ts, check, bundle) — DONE, agent 278d814b-909f-4c96-9120-c830dfb2c8c3. 4 shots re-taken 06:44–06:46 WIB (1280x800, <256 KiB, new hashes), dossier regenerated (hashes match), check 14 passed / 0 failed / thinking_reproduces 99.8%, bundle baru 3,604,608 bytes sha256 c6d05c81…73d9cc (25 sessions, 2241 messages). Visual: cover/rings/landing bagus; cockpit masih menampilkan prop-blur disc besar + blade (sudah ada sejak H3); landing pojok kiri bawah ada striping horizontal halus; Merapi di cover berupa dome hijau mulus tanpa detail kawah; sun disc tidak terlihat jelas (glint yang membawa). Bundle warning: 0 usage rows untuk sesi H4 (278d814b) + parent (2944953e) — koordinator re-run SELECT + re-bundle setelah H4 selesai.
+
+## Rules reminder
+- Surgical edits only; each edited file revised in >=2 messages.
+- Each session <25 min; verify recorder alive on report; write usage rows (muse.db, main agent_id 95db7ea8-1175-4f72-ad8a-5417d050d020); seal immediately.
+- After re-screenshot: verify visuals MYSELF (read the images): hilly terrain, soft white clouds, wavy sea, sense of depth. Fix again before reporting to parent if still flat.
+- Bundle must include the new sessions; re-run check; thinking_reproduces must stay >=30% (currently 99.8%).
+
+## State
+- H1 spawned 2026-11-26 ~12:45 WIB.
