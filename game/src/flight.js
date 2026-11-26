@@ -291,6 +291,12 @@ export function createFlight(world, aircraft, config) {
       hullFactor = hullDamageFactor(hull);
     },
 
+    // Current stall speed (per-aircraft + flaps): the crash debrief
+    // compares the impact speed against it.
+    stallSpeed() {
+      return effFlight.stallSpeed;
+    },
+
     // Ground height under a map position (runway strip, island cone or
     // sea). Render and HUD use it for ground clearance and camera work.
     groundHeightAt(x, z) {
@@ -344,6 +350,20 @@ export function createFlight(world, aircraft, config) {
 
     crash(reason) {
       if (state.status === 'crashed') return;
+      // Snapshot the impact state BEFORE zeroing it: the debrief's
+      // cause analysis reads sink rate, speed, bank, stall and fuel
+      // from here, and they would be lost once the wreck stops.
+      const snap = {
+        speed: state.speed,
+        verticalSpeed: state.verticalSpeed,
+        bankDeg: state.bankDeg,
+        pitchDeg: state.pitchDeg,
+        stalled: state.stalled,
+        fuel: state.fuel,
+        gearDeploy: state.gearDeploy,
+        x: state.position.x,
+        z: state.position.z,
+      };
       state.status = 'crashed';
       state.speed = 0;
       state.throttle = 0;
@@ -351,7 +371,7 @@ export function createFlight(world, aircraft, config) {
       rollProgress = 0;
       if (liveAircraft && liveAircraft.setThrottle) liveAircraft.setThrottle(0);
       if (flight.onEvent.onCrash) {
-        flight.onEvent.onCrash({ reason: reason || 'crash', damage: state.damage });
+        flight.onEvent.onCrash({ reason: reason || 'crash', damage: state.damage, ...snap });
       }
     },
 
@@ -717,6 +737,15 @@ export function createFlight(world, aircraft, config) {
       const onStrip = onRunwayRect(p.x, p.z);
       const zone = inTouchdownZone(p.x, p.z);
       p.y = groundY + 0.6;
+      // Debrief data, captured BEFORE the landing bleeds the speed
+      // away: airspeed and bank at the moment of contact.
+      const td = {
+        verticalSpeed: state.verticalSpeed,
+        speed: state.speed,
+        bankDeg: state.bankDeg,
+        x: p.x,
+        z: p.z,
+      };
 
       if (onStrip) {
         // Belly landing: a gentle touchdown with the gear up still
@@ -735,9 +764,7 @@ export function createFlight(world, aircraft, config) {
               gentle: true,
               belly: false,
               inZone: zone,
-              verticalSpeed: state.verticalSpeed,
-              x: p.x,
-              z: p.z,
+              ...td,
             });
           }
           return;
@@ -752,9 +779,7 @@ export function createFlight(world, aircraft, config) {
             gentle: false,
             belly,
             inZone: zone,
-            verticalSpeed: state.verticalSpeed,
-            x: p.x,
-            z: p.z,
+            ...td,
           });
         }
         if (state.damage >= dmgCfg.maxDamage) {

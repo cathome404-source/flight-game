@@ -4,7 +4,7 @@
 // Every write is guarded (missing elements are skipped) and cached
 // (the DOM is only touched when a value actually changes).
 
-import { TUNING } from './config.js';
+import { TUNING, WORLD } from './config.js';
 
 const COMPASS_POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const CARDINALS = ['N', 'E', 'S', 'W'];
@@ -81,6 +81,33 @@ const PANEL_CSS = [
   // change; any new objective or score change brings them back.
   '#hud-objective,#hud-timer-score{transition:opacity .8s ease}',
   '#hud-objective.hud-faded,#hud-timer-score.hud-faded{opacity:.38}',
+  // R2-5b — TAWS radar mini-map: one small canvas, bottom-right corner.
+  '#taws-map{position:absolute;right:14px;bottom:14px;width:140px;height:140px;z-index:4;pointer-events:none;border-radius:10px;border:1px solid rgba(255,255,255,.16)}',
+  // R2-5b — debrief inside the end screen: trace canvas, stat grid,
+  // grade badge, medal line, score breakdown, crash causes.
+  '#end-debrief{width:min(560px,92vw);margin-top:10px;text-align:left}',
+  '.debrief-title{font-size:19px;letter-spacing:1px;color:#ffb36b;margin:2px 0 8px;text-align:center}',
+  '.debrief-title.bad{color:#ff5252}',
+  '.debrief-trace{width:100%;height:auto;display:block;border-radius:8px;border:1px solid rgba(255,179,107,.35);background:rgba(8,14,22,.5)}',
+  '.debrief-legend{font-size:12px;color:#ffd9a0;margin:4px 0 8px;text-align:center}',
+  '.debrief-legend .lg-flown{color:#ffb36b;margin-right:14px}',
+  '.debrief-legend .lg-ideal{color:#8dff9e}',
+  '.debrief-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}',
+  '.debrief-stat{background:rgba(8,14,22,.45);border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:7px 10px;font-size:14px}',
+  '.debrief-stat b{float:right;color:#fff3e0}',
+  '.debrief-stat span{color:#ffd9a0}',
+  '.debrief-grade{display:inline-block;font-size:26px;font-weight:bold;padding:4px 18px;border-radius:999px;margin:4px 0}',
+  '.debrief-grade.grade-S{background:#ffd27a;color:#3a1c05}',
+  '.debrief-grade.grade-A{background:#8dff9e;color:#12300f}',
+  '.debrief-grade.grade-B{background:#ffc233;color:#3a2c05}',
+  '.debrief-grade.grade-C{background:rgba(255,255,255,.2);color:#fff3e0}',
+  '.debrief-medal{font-size:16px;margin:4px 0;color:#ffd27a}',
+  '.debrief-medal.dim{color:#ffd9a0}',
+  '.debrief-breakdown{margin:8px 0;font-size:15px;line-height:1.7}',
+  '.debrief-breakdown .row{display:flex;justify-content:space-between;border-bottom:1px dashed rgba(255,255,255,.14);padding:1px 0}',
+  '.debrief-breakdown .row.total{border-bottom:none;font-weight:bold;color:#ffb36b;font-size:17px}',
+  '.debrief-causes{margin:4px 0 8px;padding-left:22px;font-size:15px;line-height:1.6;color:#ffb0a0}',
+  '.debrief-hull{font-size:14px;color:#ffd9a0;margin-top:4px}',
 ].join('\n');
 
 function clamp(v, lo, hi) {
@@ -105,6 +132,81 @@ function formatClock(seconds) {
 function formatVspeed(v) {
   const n = v || 0;
   return (n >= 0 ? '+' : '') + n.toFixed(1);
+}
+
+// ---- R2-5b debrief helpers (pure, exported for main.js) ----
+
+// Grade a touchdown from sink rate (m/s) and lateral offset from the
+// runway centerline (m). S needs a soft kiss on the centreline; C is a
+// landing that survived but was sloppy.
+export function gradeTouchdown(td) {
+  if (!td) return null;
+  const sink = Math.abs(td.verticalSpeed || 0);
+  const rwZ = WORLD.runway ? WORLD.runway.z : 560;
+  const offset = Math.abs((td.z || 0) - rwZ);
+  let grade = 'C';
+  if (sink <= 2 && offset <= 5) grade = 'S';
+  else if (sink <= 3 && offset <= 10) grade = 'A';
+  else if (sink <= 5 && offset <= 20) grade = 'B';
+  return {
+    sink,
+    offset,
+    speed: td.speed || 0,
+    bankDeg: td.bankDeg || 0,
+    grade,
+    gentle: !!td.gentle,
+    inZone: !!td.inZone,
+    belly: !!td.belly,
+  };
+}
+
+// Pilot medal for a grade: S and A earn one, B and C do not.
+export function medalForGrade(grade) {
+  if (grade === 'S') return { id: 'pendaratan-sempurna', name: 'Pendaratan Sempurna' };
+  if (grade === 'A') return { id: 'pendaratan-halus', name: 'Pendaratan Halus' };
+  return null;
+}
+
+// Crash cause analysis: each cause is detected from the impact
+// snapshot (flight.crash) and the last touchdown, never generic text.
+// At least one cause is always returned.
+export function crashCauses(info, touchdown, stallSpeed) {
+  const causes = [];
+  if (!info) return causes;
+  const hardMax = (TUNING.damage && TUNING.damage.hardTouchdown) || 7;
+  const sink = Math.abs(info.verticalSpeed || 0);
+  if (sink > hardMax) {
+    causes.push(
+      'Sink rate ' + sink.toFixed(1) + ' m/s melebihi batas keras ' + hardMax +
+      ' m/s — hantaman terlalu keras untuk roda pendarat.'
+    );
+  }
+  if (Math.abs(info.bankDeg || 0) > 20) {
+    causes.push(
+      'Bank ' + Math.abs(info.bankDeg).toFixed(0) +
+      '° saat menghantam tanah — sayap menyentuh tanah duluan.'
+    );
+  }
+  const stall = stallSpeed || 28;
+  if (info.stalled || (typeof info.speed === 'number' && info.speed < stall)) {
+    causes.push(
+      'Kecepatan ' + (info.speed || 0).toFixed(0) + ' m/s di bawah stall ' +
+      stall.toFixed(0) + ' m/s — sayap kehilangan angkat (stall).'
+    );
+  }
+  if ((info.fuel || 0) <= 0.5) {
+    causes.push('Bahan bakar habis — mesin mati sebelum sempat mendarat.');
+  }
+  if (touchdown && touchdown.belly) {
+    causes.push('Roda pendarat terlipat — pesawat mendarat dengan perut (belly landing).');
+  }
+  if (info.reason === 'terrain') {
+    causes.push('Menabrak terrain — terbang terlalu rendah di luar runway.');
+  }
+  if (causes.length === 0) {
+    causes.push('Damage mencapai 100% — benturan beruntun merusak lambung sampai hancur.');
+  }
+  return causes;
 }
 
 export function createHud(document) {
@@ -397,6 +499,79 @@ export function createHud(document) {
     mk('div', 'rain-b', rainOverlay);
   }
 
+  // ---- R2-5b — TAWS radar mini-map: one 140x140 canvas, bottom-right.
+  // Top-down schematic of the archipelago: sea, islands, the runway
+  // strip, the next target (amber diamond) and the plane (white
+  // triangle, rotated to its heading). Redrawn every HUD update.
+  const TAWS_SIZE = 140;
+  const TAWS_HALF = (WORLD.seaSize || 4200) / 2;
+  const TAWS_SCALE = TAWS_SIZE / (WORLD.seaSize || 4200);
+  let tawsCanvas = null;
+  let tawsCtx = null;
+  if (doc.createElement && el.hud) {
+    tawsCanvas = mk('canvas', '', el.hud);
+    tawsCanvas.id = 'taws-map';
+    tawsCanvas.width = TAWS_SIZE;
+    tawsCanvas.height = TAWS_SIZE;
+  }
+  function drawTaws(state) {
+    if (!tawsCanvas || !tawsCanvas.getContext) return;
+    if (!tawsCtx) {
+      tawsCtx = tawsCanvas.getContext('2d');
+      if (!tawsCtx) return;
+    }
+    const ctx = tawsCtx;
+    const S = TAWS_SIZE;
+    const sc = TAWS_SCALE;
+    const toX = (x) => (x + TAWS_HALF) * sc;
+    const toY = (z) => (z + TAWS_HALF) * sc;
+    ctx.clearRect(0, 0, S, S);
+    ctx.fillStyle = 'rgba(23,52,84,0.88)';
+    ctx.fillRect(0, 0, S, S);
+    for (const isl of WORLD.islands || []) {
+      ctx.beginPath();
+      ctx.arc(toX(isl.x), toY(isl.z), Math.max(3, isl.radius * sc), 0, Math.PI * 2);
+      ctx.fillStyle = '#c9a86a';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(138,111,63,0.9)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    const rw = WORLD.runway;
+    if (rw) {
+      ctx.fillStyle = '#e8e8e8';
+      ctx.fillRect(toX(rw.x - rw.length / 2), toY(rw.z) - 2, rw.length * sc, 4);
+    }
+    const t = state.target;
+    if (t && typeof t.x === 'number' && typeof t.z === 'number') {
+      ctx.save();
+      ctx.translate(toX(t.x), toY(t.z));
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = '#ffb36b';
+      ctx.fillRect(-4, -4, 8, 8);
+      ctx.restore();
+    }
+    // Plane triangle, nose pointing along the heading (0 = north = up).
+    const hdg = ((state.heading || 0) * Math.PI) / 180;
+    ctx.save();
+    ctx.translate(toX(state.x || 0), toY(state.z || 0));
+    ctx.rotate(hdg);
+    ctx.beginPath();
+    ctx.moveTo(0, -7);
+    ctx.lineTo(5, 6);
+    ctx.lineTo(-5, 6);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#ff7a3c';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#ffd9a0';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText('TAWS', 5, 12);
+  }
+
   let messageTimer = null;
   let bannerTimer = null;
   // P8 — fade clock: objective + score dim 3 s after their last change.
@@ -462,6 +637,142 @@ export function createHud(document) {
     setClass(el.pause, 'on', name === 'paused');
     setClass(el.end, 'on', name === 'crashed' || name === 'complete');
     if (name === 'menu') setCockpit(false);
+  }
+
+  // R2-5b — debrief panel inside the end screen. data:
+  // { kind: 'complete'|'crashed'|'failed-time', trace: [{d,h}],
+  //   touchdown: gradeTouchdown() result, grade, medal: {name}|null,
+  //   breakdown: {rings,checkpoints,landing,takeoff,timeBonus},
+  //   causes: [strings], hull } — every field optional except kind.
+  function setDebrief(data) {
+    const box = $('end-debrief');
+    if (!box) return;
+    if (!data) {
+      box.innerHTML = '';
+      return;
+    }
+    let html = '<div class="debrief">';
+    if (data.kind === 'crashed') {
+      html += '<h3 class="debrief-title bad">Analisis Penyebab Crash</h3>';
+      html += '<ul class="debrief-causes">';
+      for (const c of data.causes || []) html += '<li>' + c + '</li>';
+      html += '</ul>';
+    } else {
+      html += '<h3 class="debrief-title">Debrief Sortie</h3>';
+    }
+    if (data.trace && data.trace.length >= 3) {
+      html += '<canvas id="debrief-trace" class="debrief-trace" width="520" height="200"></canvas>';
+      html += '<div class="debrief-legend"><span class="lg-flown">— Jalur diterbangkan</span>' +
+        '<span class="lg-ideal">┄ Glide ideal 3°</span></div>';
+    }
+    const td = data.touchdown;
+    if (td) {
+      html += '<div class="debrief-grid">' +
+        '<div class="debrief-stat"><span>Sink rate</span><b>' + td.sink.toFixed(1) + ' m/s</b></div>' +
+        '<div class="debrief-stat"><span>Offset centerline</span><b>' + td.offset.toFixed(0) + ' m</b></div>' +
+        '<div class="debrief-stat"><span>Kecepatan touchdown</span><b>' + td.speed.toFixed(0) + ' m/s</b></div>' +
+        '<div class="debrief-stat"><span>Bank saat touchdown</span><b>' + Math.abs(td.bankDeg).toFixed(0) + '°</b></div>' +
+        '</div>';
+      if (data.grade) {
+        html += '<div style="text-align:center"><div class="debrief-grade grade-' + data.grade + '">Grade ' + data.grade + '</div></div>';
+      }
+      if (data.medal) {
+        html += '<div class="debrief-medal" style="text-align:center">★ ' +
+          (data.medalNew ? 'Medali diraih: <b>' : 'Medali: <b>') + data.medal.name + '</b>' +
+          (data.medalNew ? '' : ' (sudah dimiliki)') + '</div>';
+      } else if (data.grade) {
+        html += '<div class="debrief-medal dim" style="text-align:center">Medali: belum — raih grade A atau lebih untuk medali pilot.</div>';
+      }
+    }
+    const bd = data.breakdown;
+    if (bd) {
+      const row = (label, pts) =>
+        pts > 0 ? '<div class="row"><span>' + label + '</span><span><b>' + pts + '</b></span></div>' : '';
+      const total = (bd.rings || 0) + (bd.checkpoints || 0) + (bd.landing || 0) +
+        (bd.takeoff || 0) + (bd.timeBonus || 0);
+      html += '<div class="debrief-breakdown">' +
+        row('Ring', bd.rings) + row('Checkpoint', bd.checkpoints) +
+        row('Pendaratan', bd.landing) + row('Lepas landas', bd.takeoff) +
+        row('Bonus waktu', bd.timeBonus) +
+        '<div class="row total"><span>Total skor</span><span>' + total + '</span></div></div>';
+    }
+    if (typeof data.hull === 'number') {
+      html += '<div class="debrief-hull">Lambung setelah sortie: <b>' + Math.round(data.hull) + '%</b> (kerusakan tercatat di hangar)</div>';
+    }
+    html += '</div>';
+    box.innerHTML = html;
+    const cv = $('debrief-trace');
+    if (cv && data.trace && data.trace.length >= 3) drawTrace(cv, data.trace);
+  }
+
+  // Approach-trace chart: height above the runway vs distance to the
+  // touchdown zone, flown line against the ideal 3-degree glide.
+  // Distance runs right-to-left: the plane approaches from the left
+  // and touches down at the right edge (d = 0).
+  function drawTrace(cv, trace) {
+    const ctx = cv.getContext ? cv.getContext('2d') : null;
+    if (!ctx) return;
+    const W = cv.width;
+    const H = cv.height;
+    const padL = 36;
+    const padR = 10;
+    const padT = 12;
+    const padB = 22;
+    let maxD = 200;
+    let maxH = 30;
+    for (const p of trace) {
+      if (p.d > maxD) maxD = p.d;
+      if (p.h > maxH) maxH = p.h;
+    }
+    maxD = Math.ceil(maxD * 1.1);
+    maxH = Math.ceil(maxH * 1.15);
+    const X = (d) => padL + (1 - d / maxD) * (W - padL - padR);
+    const Y = (h) => H - padB - (h / maxH) * (H - padT - padB);
+    ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillStyle = '#ffd9a0';
+    ctx.font = '11px sans-serif';
+    ctx.lineWidth = 1;
+    // Grid + height labels.
+    for (let f = 0; f <= 1; f += 0.5) {
+      const y = Y(maxH * f);
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(W - padR, y);
+      ctx.stroke();
+      ctx.fillText(Math.round(maxH * f) + ' m', 2, y + 4);
+    }
+    ctx.fillText('0 m', 2, H - padB + 4);
+    ctx.fillText('Jarak ke runway (m)', W - padR - 128, H - 6);
+    ctx.fillText('Ketinggian (m)', padL, 10);
+    // Ideal 3-degree glide, dashed green.
+    const glide = Math.tan((3 * Math.PI) / 180);
+    ctx.save();
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = '#8dff9e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(X(maxD), Y(Math.min(maxH, glide * maxD)));
+    ctx.lineTo(X(0), Y(0));
+    ctx.stroke();
+    ctx.restore();
+    // Flown path, amber.
+    ctx.strokeStyle = '#ffb36b';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    trace.forEach((p, i) => {
+      const x = X(Math.max(0, Math.min(maxD, p.d)));
+      const y = Y(Math.max(0, Math.min(maxH, p.h)));
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // Touchdown dot at the end of the flown path.
+    const last = trace[trace.length - 1];
+    ctx.beginPath();
+    ctx.arc(X(Math.max(0, last.d)), Y(Math.max(0, last.h)), 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffd27a';
+    ctx.fill();
   }
 
   // lines: array of stat lines ("Score 1250", "Time 2:05") or one string.
@@ -724,6 +1035,9 @@ export function createHud(document) {
     }
     writeText(cockpit.altText, 'cockpit-alt', String(alt));
     writeText(cockpit.speedText, 'cockpit-speed', String(Math.round(speed)));
+
+    // R2-5b — TAWS radar mini-map follows the plane and its target.
+    drawTaws(state);
   }
 
   return {
@@ -734,6 +1048,7 @@ export function createHud(document) {
     setObjective,
     setScreen,
     setEnd,
+    setDebrief,
     setCockpit,
     setRain,
   };

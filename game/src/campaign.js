@@ -287,6 +287,19 @@ export function createCampaign(missions) {
       return done;
     },
 
+    // Award a pilot medal (debrief, R2-5b). Medals are objects
+    // { id, name, sortie }; the same id is never awarded twice.
+    // Returns true when the medal is new.
+    awardMedal(medal) {
+      if (!medal || !medal.id) return false;
+      if (save.medals.some((m) => m && (m.id === medal.id || m === medal.id))) {
+        return false;
+      }
+      save.medals.push(medal);
+      writeSave(save);
+      return true;
+    },
+
     // Pay out a finished sortie's coins once, when missions reports
     // the completion. Returns the coins actually awarded (0 when the
     // completion carried no sortie, e.g. free flight).

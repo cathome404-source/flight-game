@@ -14,7 +14,7 @@ import { buildWorld } from './world.js';
 import { makeAircraft } from './aircraft.js';
 import { createFlight } from './flight.js';
 import { createMissions } from './missions.js';
-import { createHud } from './hud.js';
+import { createHud, gradeTouchdown, medalForGrade, crashCauses } from './hud.js';
 import { createAudio } from './audio.js';
 import { createRenderer } from './render.js';
 import { createShots } from './shots.js';
@@ -146,6 +146,74 @@ const state = {
   posed: false, // screenshot staging: plane stays posed, physics frozen
 };
 
+// ---- R2-5b approach trace: height vs distance to the touchdown
+// zone, sampled ~4x per second while playing, last ~60 s. The
+// debrief draws the flown path against the ideal 3-degree glide.
+// Declared before window.__flightGame below, which exposes the
+// recorder — a const declared after it would throw a TDZ error.
+const TRACE_MAX = 240;
+const trace = [];
+let traceAccum = 0;
+function recordTraceSample() {
+  const fs = flight.state;
+  if (!fs || !fs.position) return;
+  const rw = WORLD.runway;
+  const cx = (rw.touchdownZoneStart + rw.touchdownZoneEnd) / 2;
+  const dx = fs.position.x - cx;
+  const dz = fs.position.z - rw.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  if (d > 2500) return;
+  const h = Math.max(0, fs.position.y - WORLD.runwayAltitude);
+  trace.push({ d: Math.round(d), h: Math.round(h * 10) / 10 });
+  if (trace.length > TRACE_MAX) trace.shift();
+}
+function resetTrace() {
+  trace.length = 0;
+  traceAccum = 0;
+}
+
+// Last crash snapshot from the flight event (free-flight path, where
+// missions may not be active). Missions keeps its own copy too.
+let lastCrashInfo = null;
+
+// Build the debrief payload for the end screen from what missions and
+// flight recorded: approach trace, touchdown grade, score breakdown,
+// crash causes. Called from showEnd, AFTER the hull is banked, so the
+// hull figure in the debrief is the post-sortie one.
+function buildDebrief(kind) {
+  const td = missions.touchdown ? gradeTouchdown(missions.touchdown) : null;
+  const data = {
+    kind,
+    trace: trace.slice(),
+    touchdown: td,
+    grade: td ? td.grade : null,
+    medal: null,
+    medalNew: false,
+    breakdown: missions.breakdown || null,
+    causes: null,
+    hull: campaign.hull,
+  };
+  if (kind === 'crashed') {
+    const info = missions.crashInfo || lastCrashInfo;
+    data.causes = crashCauses(
+      info,
+      missions.touchdown,
+      flight.stallSpeed ? flight.stallSpeed() : 28
+    );
+  }
+  if (kind === 'complete' && td) {
+    const medal = medalForGrade(td.grade);
+    if (medal) {
+      data.medal = medal;
+      data.medalNew = campaign.awardMedal({
+        ...medal,
+        sortie: missions.current ? missions.current.id : null,
+      });
+    }
+  }
+  return data;
+}
+
 window.__flightGame = {
   flight,
   missions,
@@ -159,6 +227,10 @@ window.__flightGame = {
   hangar,
   selectAircraft,
   effects: render.effects,
+  // R2-5b test hooks: the approach-trace recorder and its samples, so
+  // a fast-forwarded play-through records the same trace real play does.
+  recordTrace: recordTraceSample,
+  trace,
   // Day-night clock (hours, 0..24) — headless tests drive it here.
   get gameHour() {
     return gameHour;
@@ -233,6 +305,9 @@ function combinedHudState() {
     alt: fs.altitude,
     speed: fs.speed,
     heading: fs.heading,
+    // TAWS mini-map: map position plus the target's map position.
+    x: fs.position.x,
+    z: fs.position.z,
     throttle: fs.throttle,
     // Fuel as a percent of the selected plane's tank (tanks differ:
     // the heavy carries 140, the interceptor 85), not raw units.
@@ -242,7 +317,7 @@ function combinedHudState() {
     time: missions.elapsed,
     objective: missions.objectiveText(),
     target: tm
-      ? { label: tm.label, dist: tm.distance, bearing: targetBearing }
+      ? { label: tm.label, dist: tm.distance, bearing: targetBearing, x: tm.x, z: tm.z }
       : null,
     stalled: fs.stalled,
     damage: fs.damage,
@@ -317,10 +392,17 @@ wrapEvent('onCrash', (info) => {
   audio.crash();
   audio.engine(false);
   render.shake(1.2);
+  lastCrashInfo = info || null;
   // A crash outside an active mission (free flight) still ends the run.
-  if (missions.status !== 'active') {
+  // When missions already failed the sortie (status 'failed') its own
+  // onFail path shows the end screen, and when the sortie already
+  // completed the completion screen owns the ending — a post-completion
+  // crash must never overwrite it. Only a mission-less ('idle') crash
+  // gets its own screen from here.
+  if (missions.status === 'idle') {
+    const run = runId;
     setTimeout(() => {
-      if (state.screen === 'playing') showEnd('Crashed', crashLines(info), 'crashed');
+      if (state.screen === 'playing' && runId === run) showEnd('Crashed', crashLines(info), 'crashed', 'crashed');
     }, 1200);
   }
 });
@@ -342,6 +424,12 @@ missions.onBoatPass = () => {
   audio.checkpoint();
 };
 
+// Sortie run id: every start/restart bumps it. The delayed end-screen
+// timeouts (onComplete/onFail/onCrash) capture the run they belong to
+// and refuse to fire once a newer run has started — otherwise a stale
+// timeout shows the previous sortie's end screen over the new one.
+let runId = 0;
+
 missions.onComplete = (info) => {
   audio.success();
   audio.engine(false);
@@ -355,8 +443,9 @@ missions.onComplete = (info) => {
       ? 'Badai Leviathan ditaklukkan — 8 ring badai di tengah badai!' + coinText
       : info.mission.name + ' — Score ' + info.score + coinText
   );
+  const run = runId;
   setTimeout(() => {
-    if (state.screen !== 'playing') return;
+    if (state.screen !== 'playing' || runId !== run) return;
     const lines = [
       info.mission.name + ' complete!',
       'Score <b>' + info.score + '</b>' + (info.newBest ? ' — new best!' : '') +
@@ -366,7 +455,7 @@ missions.onComplete = (info) => {
     if (isBoss) {
       lines.push('🏆 Kampanye Garuda Skies selesai — semua 12 sortie ditaklukkan!');
     }
-    showEnd(isBoss ? 'Kampanye Selesai!' : 'Mission Complete', lines, 'complete');
+    showEnd(isBoss ? 'Kampanye Selesai!' : 'Mission Complete', lines, 'complete', 'complete');
   }, 1800);
 };
 
@@ -374,18 +463,19 @@ missions.onFail = (info) => {
   audio.engine(false);
   const why = info.reason === 'time' ? 'Time ran out.' : 'The plane crashed.';
   hud.showBanner('Mission Failed', why);
+  const run = runId;
   setTimeout(() => {
-    if (state.screen !== 'playing') return;
+    if (state.screen !== 'playing' || runId !== run) return;
     showEnd('Mission Failed', [
       why,
       'Score <b>' + liveScore() + '</b>',
       'Time ' + formatClock(info.time),
       'Press R to retry.',
-    ], 'crashed');
+    ], 'crashed', info.reason === 'time' ? 'failed-time' : 'crashed');
   }, 1800);
 };
 
-function showEnd(title, lines, screenName) {
+function showEnd(title, lines, screenName, debriefKind) {
   // Hull ledger: sortie damage leaves the plane battered until it is
   // repaired in the hangar — bank it into the save before the flight
   // state is reset for the next run.
@@ -395,6 +485,9 @@ function showEnd(title, lines, screenName) {
   }
   state.screen = screenName;
   hud.setEnd(title, lines);
+  // The debrief is built here (after hull banking) and rendered into
+  // the same end screen — no second screen, no extra navigation.
+  hud.setDebrief(debriefKind ? buildDebrief(debriefKind) : null);
   hud.setScreen(screenName);
 }
 
@@ -411,6 +504,8 @@ function startMission(i) {
     hud.showMessage('Finish the previous mission to unlock this one.');
     return false;
   }
+  runId += 1;
+  resetTrace();
   // Re-apply the save's refits + hull fragility for this sortie.
   flight.setRefits(refitLevels(campaign.save.refits, campaign.aircraft));
   flight.setHull(campaign.hull);
@@ -433,6 +528,8 @@ function restartMission() {
   if (!missions.current) return false;
   const ok = missions.restart();
   if (!ok) return false;
+  runId += 1;
+  resetTrace();
   gameHour = missions.current && missions.current.startHour
     ? missions.current.startHour
     : START_HOUR;
@@ -459,6 +556,7 @@ function toMenu() {
   audio.setRain(0);
   hud.setRain(false);
   hud.setCockpit(false);
+  hud.setDebrief(null); // a stale debrief must never greet the next run
   if (flight.state.damage > 0) campaign.applyHullDamage(flight.state.damage);
   flight.reset();
   setView('chase');
@@ -629,6 +727,12 @@ function frame(now) {
     // the same sign flight.js expects — passed through untouched.
     flight.update(dt, input);
     missions.update(dt);
+    // Approach trace: one sample every ~0.25 s of play.
+    traceAccum += dt;
+    if (traceAccum >= 0.25) {
+      traceAccum = 0;
+      recordTraceSample();
+    }
     // Day-night clock: advances with play time only (frozen while
     // paused, posed or on the menu). A full 24 h cycle takes
     // CYCLE_MINUTES of play, so the mood visibly changes in a mission.

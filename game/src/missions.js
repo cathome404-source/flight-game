@@ -84,6 +84,12 @@ export function createMissions(flight, world, config) {
     landedGently: false,
     landedInZone: false,
     boatPass: false,
+    // R2-5b debrief: last touchdown (with sink/speed/bank at contact),
+    // crash snapshot (from flight.crash) and the score breakdown of the
+    // finished — or failed — sortie. Reset on every start().
+    touchdown: null,
+    crashInfo: null,
+    breakdown: null,
     unlocked: loadUnlocked(),
     best: loadBest(),
     bestTimes: loadBestTime(),
@@ -121,6 +127,9 @@ export function createMissions(flight, world, config) {
       api.landedInZone = false;
       api.boatPass = false;
       api.failReason = null;
+      api.touchdown = null;
+      api.crashInfo = null;
+      api.breakdown = null;
       if (flight && flight.reset) flight.reset();
       if (flight && flight.setWind) flight.setWind(def.wind || 0);
       if (flight && flight.setRefuelEnabled) {
@@ -194,24 +203,36 @@ export function createMissions(flight, world, config) {
     },
 
     // Score the finished mission, save the best, unlock the next one.
+    // The breakdown is kept for the debrief screen: every point the
+    // sortie earned, split by where it came from.
     complete(reason) {
       if (api.status !== 'active') return;
       const def = api.current;
-      let points = 0;
+      const breakdown = {
+        rings: 0,
+        checkpoints: 0,
+        landing: 0,
+        takeoff: 0,
+        timeBonus: 0,
+      };
       if (def.kind === 'takeoff') {
-        points += TAKEOFF_POINTS;
+        breakdown.takeoff = TAKEOFF_POINTS;
       } else if (def.kind === 'rings') {
-        points += api.ringsPassed * scoreCfg.ringPoints;
+        breakdown.rings = api.ringsPassed * scoreCfg.ringPoints;
       } else if (def.kind === 'tour') {
-        points += api.checkpointsVisited * scoreCfg.checkpointPoints;
+        breakdown.checkpoints = api.checkpointsVisited * scoreCfg.checkpointPoints;
       } else if (def.kind === 'landing' || def.kind === 'rescue') {
-        if (api.landedGently) points += scoreCfg.landingPoints;
+        if (api.landedGently) breakdown.landing = scoreCfg.landingPoints;
       }
       if (def.parTime) {
         const under = def.parTime - api.elapsed;
-        if (under > 0) points += Math.round(under * scoreCfg.timeBonusPerSecond);
+        if (under > 0) breakdown.timeBonus = Math.round(under * scoreCfg.timeBonusPerSecond);
       }
+      const points =
+        breakdown.rings + breakdown.checkpoints + breakdown.landing +
+        breakdown.takeoff + breakdown.timeBonus;
       api.score = points;
+      api.breakdown = breakdown;
       api.status = 'complete';
 
       let newBest = false;
@@ -253,6 +274,17 @@ export function createMissions(flight, world, config) {
       if (api.status !== 'active') return;
       api.status = 'failed';
       api.failReason = reason || 'failed';
+      // A failed sortie still earned whatever it collected before the
+      // end — the crash debrief shows those points, split the same way.
+      api.breakdown = {
+        rings: (api.ringsPassed || 0) * scoreCfg.ringPoints,
+        checkpoints: (api.checkpointsVisited || 0) * scoreCfg.checkpointPoints,
+        landing: 0,
+        takeoff: 0,
+        timeBonus: 0,
+      };
+      api.score =
+        api.breakdown.rings + api.breakdown.checkpoints;
       if (api.onFail) {
         api.onFail({
           mission: api.current,
@@ -487,6 +519,9 @@ export function createMissions(flight, world, config) {
     };
 
     flight.onEvent.onTouchdown = function (info) {
+      // Debrief keeps the last touchdown of the sortie — sink rate,
+      // speed and bank at contact, plus whether it was in the zone.
+      api.touchdown = info ? { ...info, time: api.elapsed } : null;
       if (api.status !== 'active' || !api.current) return;
       if (api.current.kind === 'landing') {
         if (info.gentle && info.inZone) {
@@ -508,7 +543,9 @@ export function createMissions(flight, world, config) {
 
     // A hard landing or terrain hit never completes a mission by itself;
     // the crash check in update() handles the failure case.
-    flight.onEvent.onCrash = function () {
+    flight.onEvent.onCrash = function (info) {
+      // Keep the impact snapshot for the crash debrief's cause analysis.
+      api.crashInfo = info || null;
       if (api.status === 'active') api.fail('crashed');
     };
   }
