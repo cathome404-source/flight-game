@@ -144,7 +144,13 @@ export function createRenderer(canvas, world) {
   sun.shadow.camera.bottom = -900;
   sun.shadow.camera.near = 100;
   sun.shadow.camera.far = 2600;
-  sun.shadow.bias = -0.0006;
+  // Deeper bias than before (-0.002, was -0.0006) plus a larger
+  // normal bias (3.0): the low sun threw regular stripe acne across
+  // every shadow-receiving surface (grass, sand, sea, runway) in the
+  // cover shot, and the first normalBias of 1.5 did not clear it —
+  // at this grazing sun angle the depth bias has to do the work.
+  sun.shadow.bias = -0.002;
+  sun.shadow.normalBias = 3.0;
   // The ortho bounds above only take effect after this — without it
   // the shadow camera keeps its default +-5 box and nothing casts.
   sun.shadow.camera.updateProjectionMatrix();
@@ -440,8 +446,14 @@ export function createRenderer(canvas, world) {
       // Cloud drift lives in effects.js now (per-instance drift of the
       // InstancedMesh layers, called just before the post pass below).
 
-      // Sea swell: the water surface breathes with slow sine waves,
-      // written from the rest positions stored on the sea mesh.
+      // Sea swell: tall slow waves (peaks ~1.5 m) the chase camera can
+      // actually see, written from the rest positions stored on the
+      // sea mesh. A third diagonal wave breaks the regular grid so the
+      // swell never reads as parallel stripes, and the normals are
+      // recomputed every frame so the sun's specular rides the waves
+      // instead of sitting flat on them. Amplitude kept at ~1.5 m, not
+      // 2 m: taller than that, the wave flanks banded into dense
+      // corduroy stripes at grazing angles in the cover shot.
       if (world && world.sea && world.sea.userData.basePositions) {
         const posAttr = world.sea.geometry.attributes.position;
         const base = world.sea.userData.basePositions;
@@ -450,10 +462,12 @@ export function createRenderer(canvas, world) {
           const bx = base[i * 3];
           const by = base[i * 3 + 1];
           posAttr.array[i * 3 + 2] =
-            Math.sin(bx * 0.02 + t * 0.9) * 0.55 +
-            Math.cos(by * 0.017 + t * 0.7) * 0.45;
+            Math.sin(bx * 0.02 + t * 0.9) * 0.8 +
+            Math.cos(by * 0.017 + t * 0.7) * 0.5 +
+            Math.sin((bx + by) * 0.011 + t * 0.55) * 0.25;
         }
         posAttr.needsUpdate = true;
+        world.sea.geometry.computeVertexNormals();
         // Drive the sea shader's ripple time from the same clock, so
         // the specular shimmer moves with the swell.
         const seaShader = world.sea.userData.shader;

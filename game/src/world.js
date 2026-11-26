@@ -10,7 +10,8 @@ import { terrainHeightAt } from './flight.js';
 // Warm golden-hour palette for the whole archipelago.
 const PALETTE = {
   sea: 0x1e6f7d,
-  seaDeep: 0x14586b,
+  seaShallow: 0x2fb3a0,
+  seaDeep: 0x0d4258,
   seaFoam: 0xfdf6dd,
   sand: 0xe8cf9a,
   sandWet: 0xd9b47c,
@@ -286,19 +287,33 @@ function makeIsland(def, rng) {
   // Foam fringe: a pale, semi-transparent band on the water just
   // outside the beach, so the shoreline reads as surf, not a hard edge.
   const foam = new THREE.Mesh(
-    new THREE.RingGeometry(def.radius * 1.0, def.radius * 1.16, 28),
+    new THREE.RingGeometry(def.radius * 1.0, def.radius * 1.16, 48),
     new THREE.MeshBasicMaterial({
       color: PALETTE.seaFoam,
       transparent: true,
-      opacity: 0.68,
+      opacity: 0.45,
       side: THREE.DoubleSide,
     })
   );
   foam.rotation.x = -Math.PI / 2;
-  // Above the swell peaks (~1.0 m) so the surf band is never
+  // Above the swell peaks (~2.0 m) so the surf band is never
   // swallowed by a wave crest.
-  foam.position.y = 1.3;
+  foam.position.y = 2.2;
   island.add(foam);
+  // Outer wash: a wider, much fainter ring so the foam edge melts
+  // into the sea instead of ending in a hard line.
+  const foamOuter = new THREE.Mesh(
+    new THREE.RingGeometry(def.radius * 1.16, def.radius * 1.45, 48),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.seaFoam,
+      transparent: true,
+      opacity: 0.16,
+      side: THREE.DoubleSide,
+    })
+  );
+  foamOuter.rotation.x = -Math.PI / 2;
+  foamOuter.position.y = 2.2;
+  island.add(foamOuter);
 
   // Main landmass: a real heightmap — rolling multi-octave hills,
   // valleys between them, a cratered volcanic peak on the tall island
@@ -587,13 +602,36 @@ function makeFuelRing(def) {
 }
 
 // Three cloud layers as InstancedMesh: high thin bright cirrus, thick
-// warm cumulus in the middle, dark purple low cloud. Puffs cluster
+// warm cumulus in the middle, warm shaded low cloud. Every cloud is
+// warm white / cream — no purple anywhere — with a denser core puff
+// wrapped in a larger, fainter halo puff, so the edge melts into the
+// sky instead of ending in a hard faceted shell. Puffs cluster
 // along the ring flight line (z = 330) so the cover/cockpit/rings shots
 // fly past them, with the rest scattered over the archipelago. Faint
 // shadow blobs on the sea under the flight-line clusters anchor the
 // clouds to the world instead of floating decals.
 function buildLayeredClouds(rng) {
-  const geo = new THREE.IcosahedronGeometry(1, 0);
+  // Soft puff geometry: a subdivided icosahedron (detail 1, smaller
+  // facets than detail 0) with a baked vertical gradient — warm bright
+  // on top, warm shaded underneath — so every puff reads as a lit
+  // cloud, never a faceted rock. The gradient is per-vertex, so the
+  // sun-side shading comes from the geometry, not the layer tint.
+  const geo = new THREE.IcosahedronGeometry(1, 1);
+  {
+    const pos = geo.attributes.position;
+    const cols = new Float32Array(pos.count * 3);
+    const top = new THREE.Color(0xfff8ea);
+    const bottom = new THREE.Color(0xd9b48a);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const t = Math.pow((pos.getY(i) + 1) / 2, 0.7);
+      c.copy(bottom).lerp(top, t);
+      cols[i * 3] = c.r;
+      cols[i * 3 + 1] = c.g;
+      cols[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  }
   const dummy = new THREE.Object3D();
   const tmpColor = new THREE.Color();
 
@@ -626,13 +664,14 @@ function buildLayeredClouds(rng) {
   const layerDefs = [
     { key: 'cirrus', yMin: 300, yMax: 380, count: 80, rMin: 14, rMax: 26, flat: 0.3, color: 0xffe6bf, opacity: 0.8, driftMin: 1.5, driftMax: 3.0 },
     { key: 'cumulus', yMin: 150, yMax: 230, count: 140, rMin: 16, rMax: 30, flat: 0.55, color: 0xfff3e0, opacity: 0.92, driftMin: 1.2, driftMax: 2.6 },
-    { key: 'low', yMin: 80, yMax: 130, count: 70, rMin: 12, rMax: 22, flat: 0.5, color: 0x8f7ba6, opacity: 0.95, driftMin: 1.8, driftMax: 3.2 },
+    { key: 'low', yMin: 80, yMax: 130, count: 70, rMin: 12, rMax: 22, flat: 0.5, color: 0xf2dcae, opacity: 0.95, driftMin: 1.8, driftMax: 3.2 },
   ];
 
   const layers = {};
   for (const def of layerDefs) {
     const mat = lambert(def.color, {
       flatShading: true,
+      vertexColors: true,
       transparent: true,
       opacity: def.opacity,
     });
@@ -668,8 +707,8 @@ function buildLayeredClouds(rng) {
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       // Jitter each puff's colour a few percent so the layer is not one
-      // flat tint: the warm top / dark bottom read comes from the layer
-      // colours themselves (bright cirrus, warm cumulus, purple low).
+      // flat tint: the warm top / shaded bottom read comes from the
+      // baked vertex gradient (bright cirrus, warm cumulus, warm low).
       const jitter = rng.range(0.9, 1.08);
       tmpColor.setHex(def.color).multiplyScalar(jitter);
       mesh.setColorAt(i, tmpColor);
@@ -678,6 +717,37 @@ function buildLayeredClouds(rng) {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     layers[def.key] = mesh;
+
+    // Halo shell: the same puffs blown up ~1.5x and much fainter, so
+    // each cloud has a dense warm core and a soft transparent edge.
+    const haloScale = new Float32Array(def.count * 3);
+    for (let i = 0; i < def.count; i++) {
+      haloScale[i * 3] = scale[i * 3] * 1.5;
+      haloScale[i * 3 + 1] = scale[i * 3 + 1] * 1.5;
+      haloScale[i * 3 + 2] = scale[i * 3 + 2] * 1.5;
+    }
+    const haloMat = lambert(def.color, {
+      flatShading: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: def.opacity * 0.38,
+    });
+    const halo = new THREE.InstancedMesh(geo, haloMat, def.count);
+    halo.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (let i = 0; i < def.count; i++) {
+      dummy.position.set(base[i * 3], base[i * 3 + 1], base[i * 3 + 2]);
+      dummy.scale.set(haloScale[i * 3], haloScale[i * 3 + 1], haloScale[i * 3 + 2]);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      halo.setMatrixAt(i, dummy.matrix);
+      const jitter = rng.range(0.9, 1.08);
+      tmpColor.setHex(def.color).multiplyScalar(jitter);
+      halo.setColorAt(i, tmpColor);
+    }
+    halo.userData.cloudDrift = { base, scale: haloScale, speed };
+    halo.instanceMatrix.needsUpdate = true;
+    if (halo.instanceColor) halo.instanceColor.needsUpdate = true;
+    layers[def.key + 'Halo'] = halo;
   }
 
   // Shadow blobs under the flight-line clusters, drifting with them.
@@ -697,7 +767,7 @@ function buildLayeredClouds(rng) {
     new THREE.Euler(-Math.PI / 2, 0, 0)
   );
   lineClusters.forEach((c, i) => {
-    const y = terrainHeightAt(c.x, c.z) + 1.2;
+    const y = terrainHeightAt(c.x, c.z) + 2.2;
     blobBase[i * 3] = c.x;
     blobBase[i * 3 + 1] = y;
     blobBase[i * 3 + 2] = c.z;
@@ -720,6 +790,9 @@ function buildLayeredClouds(rng) {
     cirrus: layers.cirrus,
     cumulus: layers.cumulus,
     low: layers.low,
+    cirrusHalo: layers.cirrusHalo,
+    cumulusHalo: layers.cumulusHalo,
+    lowHalo: layers.lowHalo,
     blobs,
     clusters: lineClusters,
   };
@@ -742,18 +815,20 @@ function makeGlintStreak() {
   along.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = along;
   ctx.fillRect(0, 0, 512, 128);
-  // Narrow across the streak: bright spine, soft transparent edges.
+  // Wide and soft across the streak: a broad bright spine with long
+  // transparent falloffs, so the glint reads as a wide golden path,
+  // not a thin sharp line.
   ctx.globalCompositeOperation = 'destination-in';
   const across = ctx.createLinearGradient(0, 0, 0, 128);
   across.addColorStop(0, 'rgba(255,255,255,0)');
-  across.addColorStop(0.35, 'rgba(255,255,255,1)');
-  across.addColorStop(0.65, 'rgba(255,255,255,1)');
+  across.addColorStop(0.22, 'rgba(255,255,255,1)');
+  across.addColorStop(0.78, 'rgba(255,255,255,1)');
   across.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = across;
   ctx.fillRect(0, 0, 512, 128);
 
   const texture = new THREE.CanvasTexture(canvas);
-  const geo = new THREE.PlaneGeometry(2600, 170);
+  const geo = new THREE.PlaneGeometry(2600, 360);
   geo.rotateX(-Math.PI / 2);
   // Lay the streak's long axis along the sun azimuth: rotateY maps +X
   // to (cos a, 0, -sin a), so a = atan2(-dirZ, dirX) lines it up.
@@ -767,15 +842,15 @@ function makeGlintStreak() {
       map: texture,
       color: 0xffd9a0,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.26,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
     })
   );
   // Centred on the flight line (z = 330) so the cover/rings shots fly
-  // along it; just above the swell peaks (+1.0 m) so waves never hide it.
-  streak.position.set(-350, 1.2, 330);
+  // along it; just above the swell peaks (+2.0 m) so waves never hide it.
+  streak.position.set(-350, 2.2, 330);
   streak.renderOrder = 2;
   return streak;
 }
@@ -787,7 +862,9 @@ export function buildWorld(rng) {
 
   // Sea: one big plane, glossy so the low sun glints on it — a
   // brighter specular and higher shininess make the sun's path on the
-  // water read clearly at golden hour.
+  // water read clearly at golden hour. Its colour is baked per vertex
+  // (turquoise shallow near shore, deep blue out at sea) and the
+  // material is white, so the gradient is the water colour.
   // Segmented (60x60) so the swell animation can move its vertices
   // smoothly — 70 units between vertices against a ~300-unit swell.
   // A small shader patch (onBeforeCompile) adds two things the plain
@@ -795,7 +872,7 @@ export function buildWorld(rng) {
   // looked down on and bright, sky-reflecting at grazing angles near
   // the horizon; and a fine normal ripple, so the specular sparkle
   // shimmers instead of sitting frozen on the swell.
-  const seaMat = phong(PALETTE.sea, { shininess: 140, specular: 0xaaccdd });
+  const seaMat = phong(0xffffff, { vertexColors: true, shininess: 55, specular: 0x99aabb });
   seaMat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = { value: 0 };
     shader.uniforms.uFresnelColor = { value: new THREE.Color(0xffc98a) };
@@ -818,12 +895,16 @@ export function buildWorld(rng) {
         `#include <normal_fragment_begin>
         // Fine ripple: two crossing sines at a much shorter wavelength
         // than the swell, so the sun's specular breaks into sparkle.
-        // Kept small (0.03): a stronger ripple bands the whole sea.
-        normal = normalize(normal + vec3(
-          sin(vG3WorldPos.x * 0.35 + uTime * 1.3) * 0.03 +
-          sin(vG3WorldPos.z * 0.29 - uTime * 1.1) * 0.025,
-          sin(vG3WorldPos.x * 0.21 - uTime * 0.8) * 0.025,
-          cos(vG3WorldPos.z * 0.33 + uTime * 1.5) * 0.03
+        // Kept very small (0.008), long wavelength (~80 m) and faded
+        // out with distance: the old stronger, high-frequency ripple
+        // aliased into stiff parallel stripes (moire) on the far sea
+        // and sand in the cover shot.
+        float rippleFade = 1.0 - smoothstep(120.0, 450.0, length(vViewPosition));
+        normal = normalize(normal + rippleFade * vec3(
+          sin(vG3WorldPos.x * 0.08 + uTime * 1.3) * 0.008 +
+          sin(vG3WorldPos.z * 0.065 - uTime * 1.1) * 0.007,
+          sin(vG3WorldPos.x * 0.055 - uTime * 0.8) * 0.007,
+          cos(vG3WorldPos.z * 0.075 + uTime * 1.5) * 0.008
         ));`
       )
       .replace(
@@ -831,11 +912,16 @@ export function buildWorld(rng) {
         `#include <output_fragment>
         // Fresnel: only at true grazing angles (right at the horizon)
         // does the water turn toward the warm sky colour; seen from
-        // above it stays deep. pow 5 keeps the bright band narrow —
-        // pow 3 washed the whole sea white.
+        // above it stays deep. pow 4 (was 5) widens the bright band a
+        // little, so the sun's path on the water reads as a broad soft
+        // glow instead of a thin sharp line. Faded out with distance:
+        // past ~1 km the swell normals + fresnel compressed into dense
+        // parallel stripes at the horizon, so the far sea keeps only a
+        // whisper of the warm tint instead of banding.
         {
-          float fres = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 5.0);
-          gl_FragColor.rgb = mix(gl_FragColor.rgb, uFresnelColor, fres * 0.28);
+          float fresDist = 1.0 - smoothstep(900.0, 2200.0, length(vViewPosition));
+          float fres = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 4.0);
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, uFresnelColor, fres * 0.25 * fresDist);
         }`
       );
     sea.userData.shader = shader;
@@ -848,6 +934,33 @@ export function buildWorld(rng) {
   sea.position.y = 0;
   // The sea catches the plane's and islands' shadows.
   sea.receiveShadow = true;
+  // Depth gradient baked per vertex: turquoise shallow water near
+  // every shore, fading to deep blue out at sea. Computed from the
+  // nearest island rim (world x = local x, world z = -local y after
+  // the mesh's -90 deg rotation), so the turquoise ring hugs each
+  // beach instead of sitting at one fixed radius.
+  {
+    const pos = sea.geometry.attributes.position;
+    const cols = new Float32Array(pos.count * 3);
+    const shallow = new THREE.Color(PALETTE.seaShallow);
+    const deep = new THREE.Color(PALETTE.seaDeep);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const wx = pos.getX(i);
+      const wz = -pos.getY(i);
+      let shore = Infinity;
+      for (const isl of WORLD.islands) {
+        const d = Math.hypot(wx - isl.x, wz - isl.z) - isl.radius;
+        if (d < shore) shore = d;
+      }
+      const t = Math.min(1, Math.max(0, (shore - 40) / 340));
+      c.copy(shallow).lerp(deep, t * t * (3 - 2 * t));
+      cols[i * 3] = c.r;
+      cols[i * 3 + 1] = c.g;
+      cols[i * 3 + 2] = c.b;
+    }
+    sea.geometry.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  }
   // Flat copy of the rest positions: the swell writes heights from these.
   sea.userData.basePositions = sea.geometry.attributes.position.array.slice();
   group.add(sea);
@@ -920,12 +1033,15 @@ function shadowify(group) {
     return cp;
   });
 
-  // Layered clouds: cirrus high, cumulus mid, low purple — three
+  // Layered clouds: cirrus high, cumulus mid, low warm — three
   // InstancedMesh layers plus faint shadow blobs on the sea below.
   const cloudSet = buildLayeredClouds(rng);
   group.add(cloudSet.cirrus);
   group.add(cloudSet.cumulus);
   group.add(cloudSet.low);
+  group.add(cloudSet.cirrusHalo);
+  group.add(cloudSet.cumulusHalo);
+  group.add(cloudSet.lowHalo);
   group.add(cloudSet.blobs);
 
   const world = {
@@ -937,7 +1053,14 @@ function shadowify(group) {
     checkpoints,
     fuelRings,
     clouds: [cloudSet.cirrus, cloudSet.cumulus, cloudSet.low],
-    cloudLayers: [cloudSet.cirrus, cloudSet.cumulus, cloudSet.low],
+    cloudLayers: [
+      cloudSet.cirrus,
+      cloudSet.cumulus,
+      cloudSet.low,
+      cloudSet.cirrusHalo,
+      cloudSet.cumulusHalo,
+      cloudSet.lowHalo,
+    ],
     cloudClusters: cloudSet.clusters,
     cloudBlobs: cloudSet.blobs,
     sea,

@@ -81,9 +81,14 @@ export function createEffects(scene, world) {
     for (let i = 0; i < n; i++) {
       const x = wrapX(drift.base[i * 3] + drift.speed[i] * cloudTime);
       const z = drift.base[i * 3 + 2];
+      // Blobs sit just above the taller swell (peaks ~2 m) so waves
+      // never swallow them; cloud puffs breathe gently up and down,
+      // each with its own phase, so the layers feel alive, not frozen.
+      // Amplitude 1.5 m: enough to feel alive, small enough that a
+      // posed shot never catches a cluster drifted out of frame.
       const y = isBlob
-        ? terrainHeightAt(x, z) + 1.2
-        : drift.base[i * 3 + 1];
+        ? terrainHeightAt(x, z) + 2.2
+        : drift.base[i * 3 + 1] + Math.sin(cloudTime * 0.12 + i * 1.7) * 1.5;
       dummy.position.set(x, y, z);
       dummy.quaternion.copy(isBlob ? blobQuat : dummy.quaternion.identity());
       dummy.scale.set(
