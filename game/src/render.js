@@ -6,6 +6,8 @@
 // so toggling C glides instead of snapping.
 
 import { TUNING, WORLD } from './config.js';
+import { terrainHeightAt } from './flight.js';
+import { createPost } from './post.js';
 
 const DEG = Math.PI / 180;
 
@@ -108,8 +110,10 @@ export function createRenderer(canvas, world) {
   if (world && world.group) scene.add(world.group);
 
   // --- Golden-hour lighting: low warm sun, sky bounce, soft fill.
+  // Sun intensity 1.9 (was 1.7) and a dimmer ambient (0.22, was 0.28):
+  // the shadowed side reads darker, so the shadow map has real contrast.
   const sunDir = sunDirection();
-  const sun = new THREE.DirectionalLight(WORLD.sky.sun, 1.7);
+  const sun = new THREE.DirectionalLight(WORLD.sky.sun, 1.9);
   sun.position.set(sunDir.x * 900, sunDir.y * 900, sunDir.z * 900);
   // Shadow camera kept tight around the play area (Garuda + runway +
   // near islands, ~900 m half-width) so the map stays crisp at 2048.
@@ -131,8 +135,47 @@ export function createRenderer(canvas, world) {
   const hemi = new THREE.HemisphereLight(WORLD.sky.zenith, 0xe8cf9a, 0.85);
   scene.add(hemi);
 
-  const ambient = new THREE.AmbientLight(0xffe0b3, 0.28);
+  const ambient = new THREE.AmbientLight(0xffe0b3, 0.22);
   scene.add(ambient);
+
+  // --- Post-processing: the custom grade pass (vignette + warm grade +
+  // grain + fake bloom) from post.js. The frame is graded in WebGL, so
+  // it is part of the canvas and part of every screenshot.
+  const post = createPost(renderer);
+
+  // --- Blob shadow: a soft dark ellipse pinned to the ground where the
+  // plane's shadow actually falls — offset from the plane by the low
+  // sun (agl / tan(elevation)) and stretched along the sun direction,
+  // like a real long golden-hour shadow. A disc straight under the
+  // plane would sit below the chase camera's frame and never be seen:
+  // the ground the camera shows starts ~50 m ahead of the plane.
+  const blobShadowHolder = new THREE.Group();
+  const blobShadow = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 28),
+    new THREE.MeshBasicMaterial({
+      color: 0x1a0e06,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    })
+  );
+  blobShadow.rotation.x = -Math.PI / 2;
+  blobShadow.renderOrder = 1;
+  blobShadowHolder.add(blobShadow);
+  scene.add(blobShadowHolder);
+  // Shadow direction (horizontal, away from the sun) and stretch.
+  const sunEl = (WORLD.sun.elevation || 14) * DEG;
+  const sunFlat = sunDirection();
+  const shadowDirLen = Math.hypot(sunFlat.x, sunFlat.z) || 1;
+  const shadowDir = {
+    x: -sunFlat.x / shadowDirLen,
+    z: -sunFlat.z / shadowDirLen,
+  };
+  // A circle cast by a low sun stretches 1/sin(elevation) along the
+  // shadow direction (~5x at 11.5 deg); the offset grows 1/tan(el).
+  const shadowStretch = 1 / Math.max(0.05, Math.sin(sunEl));
+  const shadowTan = Math.max(0.05, Math.tan(sunEl));
+  blobShadowHolder.rotation.y = -Math.atan2(shadowDir.z, shadowDir.x);
 
   // --- Lens glow: one bright sprite at the sun plus two faint ghosts.
   const glowTex = makeGlowTexture();
@@ -222,6 +265,7 @@ export function createRenderer(canvas, world) {
     const w = (canvas && canvas.clientWidth) || window.innerWidth || 1280;
     const h = (canvas && canvas.clientHeight) || window.innerHeight || 800;
     renderer.setSize(w, h, false);
+    post.setSize();
     const a = w / Math.max(1, h);
     camera.aspect = a;
     chaseCamera.aspect = a;
@@ -421,7 +465,30 @@ export function createRenderer(canvas, world) {
         shakeAmp = 0;
       }
 
-      renderer.render(scene, camera);
+      // Blob shadow: the plane's shadow on the ground, offset along the
+      // sun direction by the true low-sun distance (agl / tan(el)) and
+      // stretched like a real golden-hour shadow, so it lands on the
+      // ground the chase camera actually shows (ahead of the plane,
+      // never straight below it). Fades out by ~250 m up.
+      const groundUnder = terrainHeightAt(pos.x, pos.z);
+      const agl = Math.max(0, pos.y - groundUnder);
+      const blobFade = Math.max(0, 1 - agl / 250);
+      const shadowDist = Math.min(agl / shadowTan, 260);
+      const shadowX = pos.x + shadowDir.x * shadowDist;
+      const shadowZ = pos.z + shadowDir.z * shadowDist;
+      const shadowGroundY = terrainHeightAt(shadowX, shadowZ);
+      blobShadowHolder.visible = blobFade > 0.01;
+      if (blobShadowHolder.visible) {
+        // +1.2 m clears the sea swell (waves reach +1 m) and the sand.
+        blobShadowHolder.position.set(shadowX, shadowGroundY + 1.2, shadowZ);
+        const blobR = 4.2 + agl * 0.05;
+        blobShadow.scale.set(blobR * shadowStretch, blobR, 1);
+        blobShadow.material.opacity = 0.42 * blobFade;
+      }
+
+      // The frame goes through the post pass (grade in WebGL, so the
+      // canvas — and every screenshot of it — carries the final look).
+      post.render(scene, camera, dt);
     },
   };
   return api;

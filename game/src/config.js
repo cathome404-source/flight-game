@@ -159,7 +159,9 @@ export const WORLD = {
     { x: 100, z: -600, y: 100, radius: 16 },
   ],
   // Golden-hour sun direction (low in the west) and sky colours.
-  sun: { azimuth: 262, elevation: 14 },
+  // Elevation 11.5 deg, lowered from 14: shadows stretch ~2.4x longer
+  // than at 14 deg and the light reads warmer at golden hour.
+  sun: { azimuth: 262, elevation: 11.5 },
   sky: {
     horizon: 0xffb36b,
     zenith: 0x2e4a7a,

@@ -65,7 +65,9 @@ function eulerYXZToQuat(yaw, pitch, roll) {
 
 // Ground height at a map position: the runway strip wins over the island
 // cone beneath it, otherwise the tallest island cone, otherwise the sea.
-function terrainHeightAt(x, z) {
+// Exported: render.js pins the plane's blob shadow to this height, so
+// the disc always sits on the ground instead of floating in the air.
+export function terrainHeightAt(x, z) {
   const rw = WORLD.runway;
   const halfLen = rw.length / 2;
   const halfWid = rw.width / 2;
