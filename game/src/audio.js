@@ -17,6 +17,7 @@ export function createAudio() {
   let muted = false;
   let engineWanted = false;
   let throttleVal = 0;
+  let loadVal = 0.35; // engine load 0..1: 1 = hard climb, ~0.35 = level
   let speedVal = 0;
   let windVal = 0;
 
@@ -122,13 +123,17 @@ export function createAudio() {
 
   function applyEngine() {
     if (!engineNodes) return;
-    const freq = 52 + throttleVal * 95;
+    // Pitch follows throttle AND load: a hard climb strains the engine
+    // higher, level cruise sits lower, a descent unloads it — so the hum
+    // breathes with the flight instead of droning flat. The load spread
+    // is deliberately wide (+26 Hz) so climb vs level is clearly audible.
+    const freq = 52 + throttleVal * 95 + loadVal * 26;
     ramp(engineNodes.osc1.frequency, freq);
     ramp(engineNodes.osc2.frequency, freq * 0.5);
-    ramp(engineNodes.filter.frequency, 350 + throttleVal * 1100, 0.15);
+    ramp(engineNodes.filter.frequency, 350 + throttleVal * 1100 + loadVal * 260, 0.15);
     ramp(
       engineNodes.gain.gain,
-      engineWanted ? 0.045 + throttleVal * 0.085 : 0,
+      engineWanted ? 0.045 + throttleVal * 0.085 + loadVal * 0.015 : 0,
       0.12
     );
   }
@@ -216,6 +221,13 @@ export function createAudio() {
     // Throttle 0..1: engine pitch and loudness follow it.
     setThrottle(v) {
       throttleVal = clamp01(v || 0);
+      if (ctx) applyEngine();
+    },
+
+    // Engine load 0..1: 1 = hard climb, ~0.35 = level cruise, low = descent.
+    // Combined with the throttle, it sets the engine pitch (see applyEngine).
+    setLoad(v) {
+      loadVal = clamp01(v || 0);
       if (ctx) applyEngine();
     },
 

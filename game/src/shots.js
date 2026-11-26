@@ -88,8 +88,10 @@ export function createShots(render, flight, world, missions) {
       // Final approach from the west, nose slightly down, throttle
       // back: the lit runway and the yellow touchdown zone ahead.
       // Close enough (340 m out) that the asphalt strip reads clearly.
+      // Posed at 30 m (was 38 m) so the plane's shadow falls close
+      // enough to read in the frame instead of far down the beach.
       startForShot(3, 'free');
-      pose(-560, 38, rw.z, -90, -3, 46, 0.35);
+      pose(-560, 30, rw.z, -90, -3, 46, 0.35);
       render.setView('chase');
     }
 

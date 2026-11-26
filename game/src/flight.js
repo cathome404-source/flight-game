@@ -149,6 +149,12 @@ export function createFlight(world, aircraft, config) {
 
   let wasStalled = false;
 
+  // Smoothed stick: the controls lag the player's input a touch, so the
+  // plane responds with a slight delay and keeps a little momentum
+  // instead of snapping to the stick position.
+  let stickPitch = 0;
+  let stickRoll = 0;
+
   const flight = {
     state,
 
@@ -217,6 +223,8 @@ export function createFlight(world, aircraft, config) {
       state.wind = 0;
       state.time = 0;
       wasStalled = false;
+      stickPitch = 0;
+      stickRoll = 0;
       for (let i = 0; i < ringArmed.length; i++) ringArmed[i] = true;
       for (let i = 0; i < stormArmed.length; i++) stormArmed[i] = true;
       for (let i = 0; i < checkpointArmed.length; i++) checkpointArmed[i] = true;
@@ -252,6 +260,14 @@ export function createFlight(world, aircraft, config) {
       const rollIn = clamp(axes.roll || 0, -1, 1);
       const throttleIn = clamp(axes.throttle || 0, -1, 1);
 
+      // Inertia: ease the stick toward the commanded input (time constant
+      // ~0.16 s). A quick stick flick moves the plane late and soft; when
+      // the stick is released the attitude keeps drifting briefly before
+      // the level-off catches it.
+      const stickRate = Math.min(1, dt / 0.16);
+      stickPitch += (pitchIn - stickPitch) * stickRate;
+      stickRoll += (rollIn - stickRoll) * stickRate;
+
       const flying = state.status === 'flying';
 
       // --- Throttle: Shift/W nudges it up, Ctrl/S down, 0.55 per second.
@@ -281,30 +297,36 @@ export function createFlight(world, aircraft, config) {
       wasStalled = state.stalled;
 
       if (flying) {
-        // --- Pitch and roll follow the stick; roll auto-levels when free.
+        // --- Light turbulence: slow gusts move the level-flight target
+        // itself a degree or two, so the plane sways gently instead of
+        // fighting the auto-level spring.
+        const gustRollT = (1.2 * Math.sin(state.time * 0.9) + 0.7 * Math.sin(state.time * 1.7 + 1.3)) * DEG;
+        const gustPitchT = (0.9 * Math.sin(state.time * 0.7 + 2.1) + 0.6 * Math.sin(state.time * 1.3 + 0.4)) * DEG;
+        const gustPitchRate = (1.0 * Math.sin(state.time * 0.7 + 2.1) + 0.6 * Math.sin(state.time * 1.3 + 0.4)) * DEG;
+
+        // --- Pitch and roll follow the smoothed stick; roll auto-levels
+        // when free.
         state.pitch = clamp(
-          state.pitch + pitchIn * fly.pitchRate * DEG * dt,
+          state.pitch + (stickPitch * fly.pitchRate * DEG + gustPitchRate) * dt,
           -55 * DEG,
           55 * DEG
         );
         // Hands off the pitch stick: ease back toward level flight
         // instead of holding the last attitude.
-        if (Math.abs(pitchIn) < 0.02 && !state.stalled) {
+        if (Math.abs(stickPitch) < 0.02 && !state.stalled) {
           const pitchLevelRate = 7 * DEG;
-          if (Math.abs(state.pitch) <= pitchLevelRate * dt) state.pitch = 0;
-          else state.pitch -= Math.sign(state.pitch) * pitchLevelRate * dt;
+          const diff = gustPitchT - state.pitch;
+          if (Math.abs(diff) <= pitchLevelRate * dt) state.pitch = gustPitchT;
+          else state.pitch += Math.sign(diff) * pitchLevelRate * dt;
         }
-        const targetRoll = rollIn * fly.maxBank * DEG;
+        // --- Roll chases its target exponentially (time constant ~0.22 s)
+        // instead of snapping at full rate: the bank builds up soft and
+        // settles soft — that lag IS the inertia. The old rate cap stays
+        // only as a guard for huge deflections.
+        const targetRoll = stickRoll * fly.maxBank * DEG + gustRollT;
         const rollRate = fly.rollRate * DEG;
-        if (rollIn !== 0) {
-          const diff = targetRoll - state.roll;
-          state.roll += clamp(diff, -rollRate * dt, rollRate * dt);
-        } else {
-          // Hands off: the wings ease back toward level flight.
-          const levelRate = 35 * DEG;
-          if (Math.abs(state.roll) <= levelRate * dt) state.roll = 0;
-          else state.roll -= Math.sign(state.roll) * levelRate * dt;
-        }
+        const rollStep = (targetRoll - state.roll) * Math.min(1, dt / 0.22);
+        state.roll += clamp(rollStep, -rollRate * dt, rollRate * dt);
 
         // --- Turns: bank + speed set the turn rate. Slow + steep bank
         // turns tight, fast + shallow bank turns wide (coordinated turn).
@@ -319,10 +341,19 @@ export function createFlight(world, aircraft, config) {
         }
 
         // --- Vertical speed comes from the pitch attitude; a stall or a
-        // dead engine adds sink on top.
+        // dead engine adds sink on top, and the gusts breathe a little.
         let vy = state.speed * Math.sin(state.pitch);
         if (state.stalled) vy -= 4;
         if (state.gliding) vy -= fly.glideSink;
+        vy += 0.5 * Math.sin(state.time * 1.1 + 0.6);
+        // --- Ground effect: low over the runway the wing rides its own
+        // cushion of air — a lift boost that fades out by ~12 m up.
+        if (onRunwayRect(state.position.x, state.position.z)) {
+          const agl = state.position.y - terrainHeightAt(state.position.x, state.position.z);
+          if (agl < 12) {
+            vy += fly.groundEffect * (1 - agl / 12);
+          }
+        }
         vy = clamp(vy, -26, 26);
         state.verticalSpeed = vy;
 
@@ -396,10 +427,16 @@ export function createFlight(world, aircraft, config) {
         flight.checkProximity(fuelRingDefs, fuelArmed, 'fuel');
       }
 
-      // --- Keep the visible model in step with the physics.
+      // --- Keep the visible model in step with the physics. Flaps drop
+      // automatically at low speed (approach configuration) and retract
+      // as the plane accelerates past 1.35x stall speed; on the ground
+      // they sit flush.
+      const flapDeploy = state.status === 'flying'
+        ? clamp((fly.stallSpeed * 1.35 - state.speed) / (fly.stallSpeed * 0.35), 0, 1)
+        : 0;
       if (aircraft) {
         if (aircraft.setThrottle) aircraft.setThrottle(state.throttle);
-        if (aircraft.update) aircraft.update(dt, { roll: rollIn, pitch: pitchIn });
+        if (aircraft.update) aircraft.update(dt, { roll: stickRoll, pitch: stickPitch, flaps: flapDeploy });
       }
       flight.syncAircraft();
     },

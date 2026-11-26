@@ -378,6 +378,9 @@ function frame(now) {
     audio.setThrottle(flight.state.throttle);
     audio.setSpeed(flight.state.speed);
     audio.setWind(flight.state.wind);
+    // Engine load from the climb: climbing strains the engine (up to 1),
+    // level cruise sits near 0.35, a descent unloads it toward 0.
+    audio.setLoad(Math.max(0, Math.min(1, 0.35 + flight.state.verticalSpeed / 10)));
   }
 }
 

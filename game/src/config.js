@@ -30,6 +30,9 @@ export const TUNING = {
     climbRate: 7,
     // Sink rate while gliding with no fuel, m/s.
     glideSink: 3.5,
+    // Lift boost (m/s) from ground effect right over the runway, fading
+    // out by ~12 m above the strip.
+    groundEffect: 2.5,
     // Wind gusts in the storm mission, m/s of sideways push at peak.
     stormGust: 14,
   },

@@ -36,8 +36,10 @@ export function makeAircraft() {
   const group = new THREE.Group();
   group.name = 'aircraft';
 
-  const cream = lambert(PAINT.cream);
-  const orange = lambert(PAINT.orange);
+  // Fuselage/wing paint: a glossy phong finish with a warm specular
+  // highlight, so the cream reads as painted metal, not flat card.
+  const cream = phong(PAINT.cream, { shininess: 60, specular: 0x8a7a55 });
+  const orange = phong(PAINT.orange, { shininess: 45, specular: 0x7a3a18 });
   const orangeDark = lambert(PAINT.orangeDark);
   const metal = phong(PAINT.metal, { shininess: 70 });
   const dark = lambert(PAINT.dark);
@@ -87,6 +89,16 @@ export function makeAircraft() {
     const tip = slab(0.5, 0.2, 1.7, orange);
     tip.position.set(side * 4.45, -0.25, -0.2);
     group.add(tip);
+  }
+
+  // Flaps: inboard trailing-edge panels that drop at low speed for
+  // lift on approach; the flight model drives their deflection.
+  const flaps = {};
+  for (const side of [-1, 1]) {
+    const flap = slab(1.6, 0.12, 0.6, orangeDark);
+    flap.position.set(side * 1.35, -0.25, 0.85);
+    group.add(flap);
+    flaps[side < 0 ? 'left' : 'right'] = flap;
   }
 
   // Ailerons: separate trailing-edge panels that deflect with roll input.
@@ -212,10 +224,12 @@ export function makeAircraft() {
     propeller,
     blades,
     ailerons,
+    flaps,
     elevator,
     navLights,
     throttle: 0,
     propAngle: 0,
+    navTime: 0,
 
     // Set the throttle (0..1). The propeller spins faster as it rises.
     setThrottle(v) {
@@ -245,16 +259,29 @@ export function makeAircraft() {
       ailerons.right.rotation.x = -roll * 0.45;
       // Elevator deflects with the pitch input.
       elevator.rotation.x = pitch * 0.4;
+      // Flaps drop together with the approach setting (0..1): trailing
+      // edge down for lift at low speed, flush again when fast.
+      const flapDeflect = input.flaps || 0;
+      flaps.left.rotation.x = flapDeflect * 0.55;
+      flaps.right.rotation.x = flapDeflect * 0.55;
 
-      // Navigation lights blink gently at low throttle, steady at speed.
-      const blink = plane.throttle < 0.15
-        ? (Math.sin(plane.propAngle * 2) > 0 ? 1 : 0.25)
-        : 1;
+      // Navigation lights blink on a periodic strobe pattern at any
+      // throttle: the red/green wingtip lights flash once a second,
+      // the white tail light double-strobes — never a flat steady dot.
+      // The wingtip on-phase is long enough (0.35 s) that a screenshot
+      // still has a fair chance of catching them lit.
+      plane.navTime += dt;
+      const t = plane.navTime;
+      const wingOn = (t % 1.0) < 0.35;
+      const tailPhase = t % 1.2;
+      const tailOn = tailPhase < 0.07 || (tailPhase > 0.18 && tailPhase < 0.25);
+      const lit = { left: wingOn, right: wingOn, tail: tailOn };
       for (const key of Object.keys(navLights)) {
-        navLights[key].material.color.setHex(
-          key === 'left' ? PAINT.lightRed : key === 'right' ? PAINT.lightGreen : PAINT.lightWhite
-        );
-        navLights[key].scale.setScalar(blink);
+        const on = lit[key];
+        const base = key === 'left' ? PAINT.lightRed : key === 'right' ? PAINT.lightGreen : PAINT.lightWhite;
+        const dim = key === 'left' ? 0x4a0d06 : key === 'right' ? 0x0a3d18 : 0x6b6250;
+        navLights[key].material.color.setHex(on ? base : dim);
+        navLights[key].scale.setScalar(on ? 1 : 0.7);
       }
     },
   };
