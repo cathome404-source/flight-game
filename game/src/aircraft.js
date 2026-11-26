@@ -336,8 +336,11 @@ export function makeAircraft() {
       propeller.rotation.z = plane.propAngle;
 
       // Blur disc fades in with RPM: invisible at idle, a soft grey disc
-      // at full throttle, eased so the fade itself never pops.
-      const targetBlur = 0.05 + plane.throttle * 0.3;
+      // at full throttle, eased so the fade itself never pops. H3: the
+      // closer chase camera made the old 0.35-max disc read as a big
+      // grey bubble around the plane; the ceiling is 0.12 now, verified
+      // in the rings re-shot (a faint haze, no bubble edge).
+      const targetBlur = 0.02 + plane.throttle * 0.10;
       blurDisc.material.opacity +=
         (targetBlur - blurDisc.material.opacity) * Math.min(1, dt * 4);
 

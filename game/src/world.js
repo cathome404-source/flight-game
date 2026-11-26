@@ -111,7 +111,7 @@ function islandHeightAt(def, lx, lz) {
   if (t > rim) {
     h *= 1 - smooth01((t - rim) / (1 - rim)) * 0.85;
   }
-  return Math.max(h, 1.2);
+  return Math.max(h, 2.05);
 }
 
 // Colour of one terrain vertex: sand low by the beach, light then
@@ -177,11 +177,20 @@ function makeReliefTerrain(def) {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colours, 3));
   // Normals from the displaced surface, so the low sun lights one
-  // side of each hill and leaves the other in shade.
+  // side of each hill and leaves the other in shade. Smooth shading
+  // (not flat): the flat-shaded facets banded into visible stripes
+  // across the grass slopes at chase distance, and the smooth normals
+  // keep the relief readable without the striping. A small negative
+  // polygon offset lets the terrain win where it meets the beach rim.
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(
     geo,
-    lambert(0xffffff, { vertexColors: true, flatShading: true })
+    lambert(0xffffff, {
+      vertexColors: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
   );
   mesh.position.y = 0;
   return mesh;
@@ -195,31 +204,95 @@ function makeHill(radius, height, color, segments) {
   return mesh;
 }
 
-// One palm tree: a leaning trunk and a crown of flat fronds.
+// One palm frond as a 3D cross: two flattened cones merged into a
+// single shared geometry, so every frond reads as volume from any
+// angle instead of a flat billboard. Built lazily once, reused by
+// every palm in the scene (no extra draw calls per frond).
+let _crossFrondGeo = null;
+function getCrossFrondGeo() {
+  if (_crossFrondGeo) return _crossFrondGeo;
+  function mergeGeos(a, b) {
+    const pa = a.attributes.position.array;
+    const pb = b.attributes.position.array;
+    const na = a.attributes.normal.array;
+    const nb = b.attributes.normal.array;
+    const ua = a.attributes.uv.array;
+    const ub = b.attributes.uv.array;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(pa.length + pb.length);
+    pos.set(pa, 0);
+    pos.set(pb, pa.length);
+    const nor = new Float32Array(na.length + nb.length);
+    nor.set(na, 0);
+    nor.set(nb, na.length);
+    const uv = new Float32Array(ua.length + ub.length);
+    uv.set(ua, 0);
+    uv.set(ub, ua.length);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    return geo;
+  }
+  const bladeA = new THREE.ConeGeometry(0.9, 5.5, 4).toNonIndexed();
+  bladeA.scale(1, 1, 0.42);
+  const bladeB = new THREE.ConeGeometry(0.9, 5.5, 4).toNonIndexed();
+  bladeB.scale(0.42, 1, 1);
+  _crossFrondGeo = mergeGeos(bladeA, bladeB);
+  return _crossFrondGeo;
+}
+
+// One palm tree: a visibly bent two-segment trunk and a two-tier
+// crown — a wide drooping tier plus a smaller upright tier — so the
+// crown is a volume of crossed fronds, not one flat fan.
 function makePalm(rng) {
   const palm = new THREE.Group();
-  const lean = rng.range(-0.12, 0.12);
+  const lean = rng.range(-0.14, 0.14);
   const trunkH = rng.range(7, 11);
+  const frondGeo = getCrossFrondGeo();
+  const frondMat = lambert(PALETTE.palmLeaf, { flatShading: true });
+  const trunkMat = lambert(PALETTE.palmTrunk, { flatShading: true });
 
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.35, 0.6, trunkH, 5),
-    lambert(PALETTE.palmTrunk, { flatShading: true })
+  // Lower trunk segment, leaning; upper segment bends further, so the
+  // trunk visibly curves instead of standing straight.
+  const lower = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.42, 0.62, trunkH * 0.62, 5),
+    trunkMat
   );
-  trunk.position.y = trunkH / 2;
-  trunk.rotation.z = lean;
-  palm.add(trunk);
+  lower.position.y = trunkH * 0.31;
+  lower.rotation.z = lean;
+  palm.add(lower);
+  const upper = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.3, 0.44, trunkH * 0.48, 5),
+    trunkMat
+  );
+  upper.position.set(Math.sin(lean) * trunkH * 0.55, trunkH * 0.8, 0);
+  upper.rotation.z = lean * 1.9;
+  palm.add(upper);
 
-  const fronds = rng.int(5, 7);
-  for (let i = 0; i < fronds; i++) {
-    const frond = new THREE.Mesh(
-      new THREE.ConeGeometry(0.9, rng.range(4.5, 6.5), 4),
-      lambert(PALETTE.palmLeaf, { flatShading: true })
-    );
-    const angle = (i / fronds) * Math.PI * 2;
-    frond.position.set(Math.cos(angle) * 2.2, trunkH + 0.6, Math.sin(angle) * 2.2);
-    frond.rotation.z = Math.cos(angle) * 1.15;
-    frond.rotation.x = -Math.sin(angle) * 1.15;
-    frond.scale.set(1, 1, 0.35);
+  // Lower tier: 6 wide fronds drooping outwards, varied in length.
+  const lowerCount = 6;
+  for (let i = 0; i < lowerCount; i++) {
+    const frond = new THREE.Mesh(frondGeo, frondMat);
+    const angle = (i / lowerCount) * Math.PI * 2 + rng.range(-0.2, 0.2);
+    frond.position.set(Math.cos(angle) * 2.0, trunkH + 0.7, Math.sin(angle) * 2.0);
+    frond.rotation.z = Math.cos(angle) * 1.12;
+    frond.rotation.x = -Math.sin(angle) * 1.12;
+    frond.rotation.y = rng.range(0, Math.PI);
+    const len = rng.range(0.85, 1.25);
+    frond.scale.set(len, len, len);
+    palm.add(frond);
+  }
+  // Upper tier: 3 smaller fronds standing more upright, filling the
+  // crown's middle so it reads as a ball of leaves from the chase cam.
+  for (let i = 0; i < 3; i++) {
+    const frond = new THREE.Mesh(frondGeo, frondMat);
+    const angle = (i / 3) * Math.PI * 2 + 0.7 + rng.range(-0.2, 0.2);
+    frond.position.set(Math.cos(angle) * 1.1, trunkH + 1.3, Math.sin(angle) * 1.1);
+    frond.rotation.z = Math.cos(angle) * 0.5;
+    frond.rotation.x = -Math.sin(angle) * 0.5;
+    frond.rotation.y = rng.range(0, Math.PI);
+    const len = rng.range(0.55, 0.7);
+    frond.scale.set(len, len, len);
     palm.add(frond);
   }
 
@@ -232,22 +305,32 @@ function makePalm(rng) {
   return palm;
 }
 
-// A small island hut: whitewashed walls, a steep terracotta roof.
+// A small island hut: whitewashed walls in varied tints, a tall
+// pyramid roof in varied terracotta/brown, a door and a dark window
+// so the walls read as a building, not a plain box. Overall scale
+// varies so no two huts on a shore are the same height.
+const HUT_WALLS = [0xf2e3c2, 0xeed9a8, 0xdfe8dd, 0xf0d3b8, 0xe8d8c0];
+const HUT_ROOFS = [0xb4552d, 0x8a4a2a, 0x6e3f2a, 0xa03a24, 0x9c5a30];
 function makeHut(rng) {
   const hut = new THREE.Group();
   const w = rng.range(5, 8);
   const d = rng.range(5, 7);
-  const h = rng.range(3, 4.5);
+  const h = rng.range(3, 5);
+  const wallCol = HUT_WALLS[rng.int(0, HUT_WALLS.length - 1)];
+  const roofCol = HUT_ROOFS[rng.int(0, HUT_ROOFS.length - 1)];
 
-  const walls = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(PALETTE.hutWall));
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(wallCol));
   walls.position.y = h / 2;
   hut.add(walls);
 
+  // Pyramid roof with a real overhang and a tall, varied pitch, so the
+  // roof is the hut's loudest shape from the air.
+  const roofH = rng.range(2.8, 4.4);
   const roof = new THREE.Mesh(
-    new THREE.ConeGeometry(Math.max(w, d) * 0.78, rng.range(2.5, 3.5), 4),
-    lambert(PALETTE.hutRoof, { flatShading: true })
+    new THREE.ConeGeometry(Math.max(w, d) * 0.85, roofH, 4),
+    lambert(roofCol, { flatShading: true })
   );
-  roof.position.y = h + 1.4;
+  roof.position.y = h + roofH / 2 - 0.2;
   roof.rotation.y = Math.PI / 4;
   hut.add(roof);
 
@@ -255,9 +338,52 @@ function makeHut(rng) {
     new THREE.BoxGeometry(1.2, 2, 0.2),
     lambert(0x5a3a22)
   );
-  door.position.set(0, 1, d / 2 + 0.05);
+  door.position.set(-w * 0.18, 1, d / 2 + 0.05);
   hut.add(door);
+
+  // Dark window beside the door: one dark rectangle is enough to stop
+  // the wall reading as a blank slab.
+  const win = new THREE.Mesh(
+    new THREE.BoxGeometry(1.1, 1.1, 0.15),
+    lambert(0x2e3a44)
+  );
+  win.position.set(w * 0.22, h * 0.55, d / 2 + 0.05);
+  hut.add(win);
+
+  const s = rng.range(0.85, 1.35);
+  hut.scale.set(s, s, s);
   return hut;
+}
+
+// Coastal rock: one lumpy polyhedron from a shared low-poly geometry,
+// squashed at random so no two rocks share a silhouette. Two shared
+// materials (grey, brown) keep the whole shoreline cheap.
+let _rockGeos = null;
+function getRockGeos() {
+  if (_rockGeos) return _rockGeos;
+  _rockGeos = [1, 1.6, 2.4].map((r) => new THREE.IcosahedronGeometry(r, 0));
+  return _rockGeos;
+}
+const ROCK_MATS = [
+  lambert(0x8a8078, { flatShading: true }),
+  lambert(0x7a6a58, { flatShading: true }),
+];
+function makeRockCluster(rng, size) {
+  const cluster = new THREE.Group();
+  const geos = getRockGeos();
+  const count = rng.int(2, 3);
+  for (let i = 0; i < count; i++) {
+    const rock = new THREE.Mesh(
+      geos[rng.int(0, geos.length - 1)],
+      ROCK_MATS[rng.int(0, ROCK_MATS.length - 1)]
+    );
+    const s = size * rng.range(0.6, 1.15);
+    rock.scale.set(s * rng.range(0.8, 1.3), s * rng.range(0.55, 0.9), s * rng.range(0.8, 1.3));
+    rock.position.set(rng.range(-size, size) * 0.8, s * 0.25, rng.range(-size, size) * 0.8);
+    rock.rotation.y = rng.range(0, Math.PI * 2);
+    cluster.add(rock);
+  }
+  return cluster;
 }
 
 // One named island: sand rim, grassy cone, extra hills, palms and huts.
@@ -281,7 +407,9 @@ function makeIsland(def, rng) {
     lambert(PALETTE.sandWet, { transparent: true, opacity: 0.85 })
   );
   wetSand.rotation.x = -Math.PI / 2;
-  wetSand.position.y = 2.06;
+  // 2.14 m: above the relief terrain's 2.05 m rim floor, so the wet
+  // band never z-fights the grass at the shoreline.
+  wetSand.position.y = 2.14;
   island.add(wetSand);
 
   // Foam fringe: a pale, semi-transparent band on the water just
@@ -368,6 +496,74 @@ function makeIsland(def, rng) {
     hut.position.set(hx, islandHeightAt(def, hx, hz), hz);
     hut.rotation.y = rng.range(0, Math.PI * 2);
     island.add(hut);
+  }
+
+  // Rock formations on the shoreline and around the cliffs: clusters
+  // of lumpy grey/brown polyhedra, half-buried at the water's edge,
+  // so the island rim reads as 3D texture instead of a smooth rim.
+  // Batu Karang is the rocky island and gets twice as many.
+  const rockCount = Math.round(def.radius / (def.name === 'Batu Karang' ? 45 : 85));
+  for (let i = 0; i < rockCount; i++) {
+    const angle = rng.range(0, Math.PI * 2);
+    const dist = rng.range(def.radius * 0.9, def.radius * 1.08);
+    const rx = Math.cos(angle) * dist;
+    const rz = Math.sin(angle) * dist;
+    const cluster = makeRockCluster(rng, rng.range(2.5, 6));
+    cluster.position.set(rx, Math.max(0.5, islandHeightAt(def, rx, rz) - 1.5), rz);
+    cluster.rotation.y = rng.range(0, Math.PI * 2);
+    island.add(cluster);
+  }
+  // A few inland boulders on the high ground, for the cliff areas.
+  for (let i = 0; i < Math.round(def.radius / 160); i++) {
+    const angle = rng.range(0, Math.PI * 2);
+    const dist = rng.range(def.radius * 0.4, def.radius * 0.7);
+    const rx = Math.cos(angle) * dist;
+    const rz = Math.sin(angle) * dist;
+    const cluster = makeRockCluster(rng, rng.range(2, 4));
+    cluster.position.set(rx, islandHeightAt(def, rx, rz) - 0.5, rz);
+    cluster.rotation.y = rng.range(0, Math.PI * 2);
+    island.add(cluster);
+  }
+
+  // Denser vegetation where the screenshots look: a palm grove north
+  // of the runway and along the ring-run line (z = 330), plus low
+  // bushes filling the gaps, so the ground near the runway and the
+  // mission route never reads as empty grass.
+  if (def.name === 'Garuda') {
+    for (let i = 0; i < 14; i++) {
+      const px = rng.range(-620, 480);
+      const pz = rng.range(300, 500);
+      if (
+        Math.abs(px - WORLD.runway.x) <= WORLD.runway.length / 2 + 12 &&
+        Math.abs(pz - WORLD.runway.z) <= WORLD.runway.width / 2 + 12
+      ) {
+        continue;
+      }
+      const palm = makePalm(rng);
+      palm.position.set(px, islandHeightAt(def, px, pz), pz);
+      palm.rotation.y = rng.range(0, Math.PI * 2);
+      const s = rng.range(0.9, 1.4);
+      palm.scale.set(s, s, s);
+      island.add(palm);
+    }
+    const bushGeo = new THREE.IcosahedronGeometry(1.8, 0);
+    const bushMat = lambert(PALETTE.grassDeep, { flatShading: true });
+    for (let i = 0; i < 18; i++) {
+      const bush = new THREE.Mesh(bushGeo, bushMat);
+      const bx = rng.range(-650, 500);
+      const bz = rng.range(300, 520);
+      if (
+        Math.abs(bx - WORLD.runway.x) <= WORLD.runway.length / 2 + 12 &&
+        Math.abs(bz - WORLD.runway.z) <= WORLD.runway.width / 2 + 12
+      ) {
+        continue;
+      }
+      const s = rng.range(0.7, 1.5);
+      bush.scale.set(s * 1.4, s * 0.75, s * 1.4);
+      bush.position.set(bx, islandHeightAt(def, bx, bz) + 0.6, bz);
+      bush.rotation.y = rng.range(0, Math.PI * 2);
+      island.add(bush);
+    }
   }
 
   return island;

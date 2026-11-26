@@ -224,9 +224,11 @@ export function createRenderer(canvas, world) {
   sunGlow.scale.set(1100, 1100, 1);
   scene.add(sunGlow);
   // Visible sun disc: a small bright disc inside the glow, so the sun
-  // itself reads as an object in the sky, not just a haze.
+  // itself reads as an object in the sky, not just a haze. Radius 95
+  // (was 55): at 3300 m the old disc was ~11 px and vanished against
+  // the pale horizon sky; this one reads as a sun in the cover frame.
   const sunDisc = new THREE.Mesh(
-    new THREE.CircleGeometry(55, 32),
+    new THREE.CircleGeometry(95, 32),
     new THREE.MeshBasicMaterial({ color: 0xfff3c4, fog: false })
   );
   sunDisc.position.set(sunDir.x * 3300, sunDir.y * 3300, sunDir.z * 3300);
@@ -331,8 +333,11 @@ export function createRenderer(canvas, world) {
     // Ideal chase spot, then the damped eye eases toward it (dt-scaled,
     // ~5/s): the camera trails the plane through turns instead of
     // snapping to its tail. On snap the eye jumps straight there.
-    tmpEye.copy(state.position).addScaledVector(back, camCfg.chaseDistance);
-    tmpEye.y += camCfg.chaseHeight;
+    // H3 — closer, lower chase camera: 0.8x the distance and 0.7x the
+    // height, so the plane fills more of the frame and the horizon
+    // sits lower, with the mountains and sky looming above it.
+    tmpEye.copy(state.position).addScaledVector(back, camCfg.chaseDistance * 0.8);
+    tmpEye.y += camCfg.chaseHeight * 0.7;
     if (snapNext) {
       chaseEye.copy(tmpEye);
     } else {
@@ -342,8 +347,10 @@ export function createRenderer(canvas, world) {
     forwardOf(state, tmpForward);
     tmpTarget
       .copy(state.position)
-      .addScaledVector(tmpForward, 14);
-    tmpTarget.y += 1.2;
+      .addScaledVector(tmpForward, 16);
+    // H3 — aim a touch above the nose: the horizon drops in the frame
+    // and the sky, clouds and mountains take the upper half.
+    tmpTarget.y += 3.2;
     chaseCamera.lookAt(tmpTarget);
     // P7 — the chase camera banks with the plane, about a third of the
     // plane's roll: the plane stays near-level in the frame while the

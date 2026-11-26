@@ -68,12 +68,15 @@ export function createShots(render, flight, world, missions) {
     const ringZ = WORLD.rings[0].z;
 
     if (name === 'cover') {
-      // Chase view over the sea west of Garuda: the first ring dead
-      // ahead, the runway strip ahead-right on the south beach.
-      // Banked 28 deg at 70 m/s so the wingtip contrails stream
-      // behind the plane and the wind streaks read in the cover frame.
+      // H3 — dramatic cover: east of Garuda over open sea, heading
+      // WNW (yaw 62, bearing ~298) so the frame holds the low sun and
+      // its glint path on the left, Merapi Kecil looming on the right,
+      // and rings 2 and 3 in the middle distance. Lower (100 m) at
+      // 70 m/s. Banked 0 deg on purpose: a banked pose turns the plane
+      // while the screenshot waits, and the turn walks the sun out of
+      // the frame; wings-level locks the sun/Merapi composition.
       startForShot(1, 'free');
-      pose(-650, 120, ringZ, -90, 0, 70, 0.7, 28);
+      pose(1650, 100, 100, 62, 0, 70, 0.7, 0);
       render.setView('chase');
     } else if (name === 'cockpit') {
       // Cockpit view on the same approach, lower, instruments lit.
