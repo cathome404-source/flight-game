@@ -241,68 +241,112 @@ function getCrossFrondGeo() {
   return _crossFrondGeo;
 }
 
-// One palm tree: a visibly bent two-segment trunk and a two-tier
-// crown — a wide drooping tier plus a smaller upright tier — so the
-// crown is a volume of crossed fronds, not one flat fan.
-function makePalm(rng) {
-  const palm = new THREE.Group();
-  const lean = rng.range(-0.14, 0.14);
-  const trunkH = rng.range(7, 11);
+// Instanced palms from collected specs: one trunk mesh + one frond
+// mesh for the whole archipelago (2 draw calls instead of ~12 per
+// palm). Each palm gets one slightly leaning trunk and a two-tier
+// crown — 6 wide drooping fronds plus 3 smaller upright ones — so the
+// crown is still a volume of crossed fronds from the chase cam.
+// A tiny deterministic hash jitters each instance's colour and frond
+// length, so no two palms look identical.
+function hash01(n) {
+  const h = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return h - Math.floor(h);
+}
+
+function buildInstancedPalms(palmSpecs) {
+  const group = new THREE.Group();
+  if (!palmSpecs.length) return group;
+  const dummy = new THREE.Object3D();
+  const tmpColor = new THREE.Color();
+
+  const trunkGeo = new THREE.CylinderGeometry(0.3, 0.6, 9, 5);
+  trunkGeo.translate(0, 4.5, 0);
+  const trunks = new THREE.InstancedMesh(
+    trunkGeo,
+    lambert(PALETTE.palmTrunk, { flatShading: true }),
+    palmSpecs.length
+  );
+  palmSpecs.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, p.yaw, p.lean);
+    dummy.scale.setScalar(p.s);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+    tmpColor.setHex(PALETTE.palmTrunk).multiplyScalar(0.9 + hash01(i * 3 + 1) * 0.2);
+    trunks.setColorAt(i, tmpColor);
+  });
+  trunks.instanceMatrix.needsUpdate = true;
+  if (trunks.instanceColor) trunks.instanceColor.needsUpdate = true;
+  trunks.castShadow = true;
+  trunks.receiveShadow = true;
+  group.add(trunks);
+
+  const FRONDS_PER_PALM = 9;
   const frondGeo = getCrossFrondGeo();
-  const frondMat = lambert(PALETTE.palmLeaf, { flatShading: true });
-  const trunkMat = lambert(PALETTE.palmTrunk, { flatShading: true });
-
-  // Lower trunk segment, leaning; upper segment bends further, so the
-  // trunk visibly curves instead of standing straight.
-  const lower = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.42, 0.62, trunkH * 0.62, 5),
-    trunkMat
+  const fronds = new THREE.InstancedMesh(
+    frondGeo,
+    lambert(PALETTE.palmLeaf, { flatShading: true }),
+    palmSpecs.length * FRONDS_PER_PALM
   );
-  lower.position.y = trunkH * 0.31;
-  lower.rotation.z = lean;
-  palm.add(lower);
-  const upper = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.3, 0.44, trunkH * 0.48, 5),
-    trunkMat
-  );
-  upper.position.set(Math.sin(lean) * trunkH * 0.55, trunkH * 0.8, 0);
-  upper.rotation.z = lean * 1.9;
-  palm.add(upper);
+  let fi = 0;
+  palmSpecs.forEach((p, i) => {
+    const crownY = p.y + 9 * p.s + 0.7 * p.s;
+    for (let f = 0; f < FRONDS_PER_PALM; f++) {
+      const lower = f < 6;
+      const angle = ((f % 6) / 6) * Math.PI * 2 + p.yaw;
+      const rad = lower ? 2.0 : 1.1;
+      const tilt = lower ? 1.12 : 0.5;
+      const len = lower
+        ? 0.85 + hash01(i * 17 + f * 5) * 0.4
+        : 0.55 + hash01(i * 17 + f * 5) * 0.15;
+      dummy.position.set(
+        p.x + Math.cos(angle) * rad * p.s,
+        crownY + (lower ? 0 : 0.6 * p.s),
+        p.z + Math.sin(angle) * rad * p.s
+      );
+      dummy.rotation.set(-Math.sin(angle) * tilt, hash01(i * 31 + f) * Math.PI, Math.cos(angle) * tilt);
+      dummy.scale.setScalar(len * p.s);
+      dummy.updateMatrix();
+      fronds.setMatrixAt(fi, dummy.matrix);
+      tmpColor.setHex(PALETTE.palmLeaf).multiplyScalar(0.88 + hash01(i * 13 + f * 7) * 0.24);
+      fronds.setColorAt(fi, tmpColor);
+      fi++;
+    }
+  });
+  fronds.instanceMatrix.needsUpdate = true;
+  if (fronds.instanceColor) fronds.instanceColor.needsUpdate = true;
+  fronds.castShadow = true;
+  fronds.receiveShadow = true;
+  group.add(fronds);
+  return group;
+}
 
-  // Lower tier: 6 wide fronds drooping outwards, varied in length.
-  const lowerCount = 6;
-  for (let i = 0; i < lowerCount; i++) {
-    const frond = new THREE.Mesh(frondGeo, frondMat);
-    const angle = (i / lowerCount) * Math.PI * 2 + rng.range(-0.2, 0.2);
-    frond.position.set(Math.cos(angle) * 2.0, trunkH + 0.7, Math.sin(angle) * 2.0);
-    frond.rotation.z = Math.cos(angle) * 1.12;
-    frond.rotation.x = -Math.sin(angle) * 1.12;
-    frond.rotation.y = rng.range(0, Math.PI);
-    const len = rng.range(0.85, 1.25);
-    frond.scale.set(len, len, len);
-    palm.add(frond);
-  }
-  // Upper tier: 3 smaller fronds standing more upright, filling the
-  // crown's middle so it reads as a ball of leaves from the chase cam.
-  for (let i = 0; i < 3; i++) {
-    const frond = new THREE.Mesh(frondGeo, frondMat);
-    const angle = (i / 3) * Math.PI * 2 + 0.7 + rng.range(-0.2, 0.2);
-    frond.position.set(Math.cos(angle) * 1.1, trunkH + 1.3, Math.sin(angle) * 1.1);
-    frond.rotation.z = Math.cos(angle) * 0.5;
-    frond.rotation.x = -Math.sin(angle) * 0.5;
-    frond.rotation.y = rng.range(0, Math.PI);
-    const len = rng.range(0.55, 0.7);
-    frond.scale.set(len, len, len);
-    palm.add(frond);
-  }
-
-  const nuts = new THREE.Mesh(
-    new THREE.SphereGeometry(0.55, 6, 5),
-    lambert(0x6b4a2a, { flatShading: true })
+// Instanced bushes: one low-poly blob mesh for every bush on Garuda.
+function buildInstancedBushes(bushSpecs) {
+  const group = new THREE.Group();
+  if (!bushSpecs.length) return group;
+  const dummy = new THREE.Object3D();
+  const tmpColor = new THREE.Color();
+  const bushes = new THREE.InstancedMesh(
+    new THREE.IcosahedronGeometry(1.8, 0),
+    lambert(PALETTE.grassDeep, { flatShading: true }),
+    bushSpecs.length
   );
-  nuts.position.y = trunkH - 0.4;
-  palm.add(nuts);
-  return palm;
+  bushSpecs.forEach((b, i) => {
+    dummy.position.set(b.x, b.y, b.z);
+    dummy.rotation.set(0, b.yaw, 0);
+    dummy.scale.set(b.s * 1.4, b.s * 0.75, b.s * 1.4);
+    dummy.updateMatrix();
+    bushes.setMatrixAt(i, dummy.matrix);
+    tmpColor.setHex(PALETTE.grassDeep).multiplyScalar(0.9 + hash01(i * 7 + 2) * 0.2);
+    bushes.setColorAt(i, tmpColor);
+  });
+  bushes.instanceMatrix.needsUpdate = true;
+  if (bushes.instanceColor) bushes.instanceColor.needsUpdate = true;
+  bushes.castShadow = true;
+  bushes.receiveShadow = true;
+  group.add(bushes);
+  return group;
 }
 
 // A small island hut: whitewashed walls in varied tints, a tall
@@ -387,7 +431,12 @@ function makeRockCluster(rng, size) {
 }
 
 // One named island: sand rim, grassy cone, extra hills, palms and huts.
-function makeIsland(def, rng) {
+// Palms and bushes are NOT built here any more: their world-space
+// specs are collected into palmSpecs/bushSpecs and turned into two
+// InstancedMeshes by buildWorld (one draw call per part instead of
+// ~12 meshes per palm — the old per-palm groups cost hundreds of
+// draw calls and made the islands read empty anyway).
+function makeIsland(def, rng, palmSpecs, bushSpecs) {
   const island = new THREE.Group();
   island.position.set(def.x, 0, def.z);
   island.userData = { name: def.name, radius: def.radius, height: def.height };
@@ -452,7 +501,7 @@ function makeIsland(def, rng) {
 
   // Palm trees ring the beach; a few more inland on the low islands.
   // Denser than before (radius/38) so the islands read as inhabited
-  // tropical shores, not bare cones.
+  // tropical shores, not bare cones. Specs only — see buildWorld.
   const palmCount = Math.round(def.radius / 38);
   for (let i = 0; i < palmCount; i++) {
     const angle = rng.range(0, Math.PI * 2);
@@ -467,13 +516,14 @@ function makeIsland(def, rng) {
     ) {
       continue;
     }
-    const palm = makePalm(rng);
-    // Palms stand on the relief surface, not on a flat beach line.
-    palm.position.set(px, islandHeightAt(def, px, pz), pz);
-    palm.rotation.y = rng.range(0, Math.PI * 2);
-    const s = rng.range(0.8, 1.3);
-    palm.scale.set(s, s, s);
-    island.add(palm);
+    palmSpecs.push({
+      x: def.x + px,
+      y: islandHeightAt(def, px, pz),
+      z: def.z + pz,
+      s: rng.range(0.8, 1.3),
+      lean: rng.range(-0.14, 0.14),
+      yaw: rng.range(0, Math.PI * 2),
+    });
   }
 
   // Huts cluster near the shore; the runway island gets a few more.
@@ -530,7 +580,7 @@ function makeIsland(def, rng) {
   // bushes filling the gaps, so the ground near the runway and the
   // mission route never reads as empty grass.
   if (def.name === 'Garuda') {
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 26; i++) {
       const px = rng.range(-620, 480);
       const pz = rng.range(300, 500);
       if (
@@ -539,17 +589,16 @@ function makeIsland(def, rng) {
       ) {
         continue;
       }
-      const palm = makePalm(rng);
-      palm.position.set(px, islandHeightAt(def, px, pz), pz);
-      palm.rotation.y = rng.range(0, Math.PI * 2);
-      const s = rng.range(0.9, 1.4);
-      palm.scale.set(s, s, s);
-      island.add(palm);
+      palmSpecs.push({
+        x: def.x + px,
+        y: islandHeightAt(def, px, pz),
+        z: def.z + pz,
+        s: rng.range(0.9, 1.4),
+        lean: rng.range(-0.14, 0.14),
+        yaw: rng.range(0, Math.PI * 2),
+      });
     }
-    const bushGeo = new THREE.IcosahedronGeometry(1.8, 0);
-    const bushMat = lambert(PALETTE.grassDeep, { flatShading: true });
-    for (let i = 0; i < 18; i++) {
-      const bush = new THREE.Mesh(bushGeo, bushMat);
+    for (let i = 0; i < 34; i++) {
       const bx = rng.range(-650, 500);
       const bz = rng.range(300, 520);
       if (
@@ -558,11 +607,13 @@ function makeIsland(def, rng) {
       ) {
         continue;
       }
-      const s = rng.range(0.7, 1.5);
-      bush.scale.set(s * 1.4, s * 0.75, s * 1.4);
-      bush.position.set(bx, islandHeightAt(def, bx, bz) + 0.6, bz);
-      bush.rotation.y = rng.range(0, Math.PI * 2);
-      island.add(bush);
+      bushSpecs.push({
+        x: def.x + bx,
+        y: islandHeightAt(def, bx, bz) + 0.6,
+        z: def.z + bz,
+        s: rng.range(0.7, 1.5),
+        yaw: rng.range(0, Math.PI * 2),
+      });
     }
   }
 
@@ -704,17 +755,62 @@ function makeRunway(rw) {
   return runway;
 }
 
-// A glowing torus ring, standing upright and facing the flight line.
-function makeRing(def, color, tilt) {
+// Number board: a dark plate with a big gold number, hung above the
+// ring so the pilot can read which gate it is from far away. One
+// canvas texture per ring, drawn once at build time.
+function makeNumberBoard(num) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#101418';
+  ctx.fillRect(0, 0, 256, 128);
+  ctx.strokeStyle = '#ffc93c';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(6, 6, 244, 116);
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 84px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(num), 128, 70);
+  const tex = new THREE.CanvasTexture(canvas);
+  const board = new THREE.Mesh(
+    new THREE.PlaneGeometry(13, 6.5),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide })
+  );
+  return board;
+}
+
+// A big 3D gold ring: a fat metallic torus (standard material, so the
+// low sun glints along its rim) with a thin bright emissive rim ring
+// outside it and a number board above, readable from far away. The
+// torus colour follows the ring set (orange / red / teal / amber /
+// white / violet) so each sortie line keeps its colour, but every
+// ring now has real metal and a lit rim instead of a flat outline.
+function makeRing(def, color, tilt, num) {
   const ring = new THREE.Group();
   ring.position.set(def.x, def.y, def.z);
   ring.userData = { radius: def.radius, passed: false };
 
-  const torus = new THREE.Mesh(
-    new THREE.TorusGeometry(def.radius, 1.1, 8, 28),
-    new THREE.MeshBasicMaterial({ color })
+  const gold = new THREE.Mesh(
+    new THREE.TorusGeometry(def.radius, 1.7, 10, 36),
+    new THREE.MeshStandardMaterial({
+      color,
+      metalness: 0.85,
+      roughness: 0.28,
+      emissive: color,
+      emissiveIntensity: 0.28,
+    })
   );
-  ring.add(torus);
+  ring.add(gold);
+
+  // Emissive rim: a thin bright torus just outside the main tube, so
+  // the ring's edge glows even against a bright sky.
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(def.radius + 1.9, 0.32, 6, 36),
+    new THREE.MeshBasicMaterial({ color: 0xffe9a8 })
+  );
+  ring.add(rim);
 
   // Inner glow disc, faint, so the hole reads from far away.
   const glow = new THREE.Mesh(
@@ -727,6 +823,13 @@ function makeRing(def, color, tilt) {
     })
   );
   ring.add(glow);
+
+  // Number board above the ring, facing along the flight line.
+  if (typeof num === 'number') {
+    const board = makeNumberBoard(num);
+    board.position.y = def.radius + 9;
+    ring.add(board);
+  }
 
   // Small pylons under the ring so it looks anchored in the sky.
   const pylon = new THREE.Mesh(
@@ -1079,6 +1182,224 @@ function makeGlintStreak() {
   return streak;
 }
 
+// --- Small life on the water: fishing boats, a ferry, a coastal
+// village with warm windows, a lighthouse, and morning mist banks.
+// All built from the same cheap lambert materials as the islands.
+
+// One fishing boat: wooden hull, pointed bow, a mast and two bamboo
+// outrigger poles — the classic perahu, readable from the air.
+function makeFishingBoat() {
+  const boat = new THREE.Group();
+  const hull = new THREE.Mesh(
+    new THREE.BoxGeometry(7, 1.4, 2.6),
+    lambert(0x7a4a28, { flatShading: true })
+  );
+  hull.position.y = 0.7;
+  boat.add(hull);
+  const bow = new THREE.Mesh(
+    new THREE.ConeGeometry(1.3, 2.6, 4),
+    lambert(0x8a5a30, { flatShading: true })
+  );
+  bow.rotation.z = -Math.PI / 2;
+  bow.rotation.y = Math.PI / 4;
+  bow.position.set(4.6, 0.7, 0);
+  boat.add(bow);
+  const mast = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.12, 5, 5),
+    lambert(0x5a3a22)
+  );
+  mast.position.set(0.5, 3.6, 0);
+  boat.add(mast);
+  for (const side of [-1, 1]) {
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.09, 3.4, 4),
+      lambert(0x6b4a2a)
+    );
+    pole.rotation.x = Math.PI / 2;
+    pole.position.set(0.5, 0.5, side * 2.2);
+    boat.add(pole);
+    const float = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.28, 0.28, 3.2, 5),
+      lambert(0xd8c49a)
+    );
+    float.rotation.x = Math.PI / 2;
+    float.position.set(0.5, 0.15, side * 3.8);
+    boat.add(float);
+  }
+  return boat;
+}
+
+// One ferry: a bigger white hull with a lit window strip, crossing
+// between the islands.
+function makeFerry() {
+  const ferry = new THREE.Group();
+  const hull = new THREE.Mesh(
+    new THREE.BoxGeometry(26, 3.2, 8),
+    lambert(0x27435e, { flatShading: true })
+  );
+  hull.position.y = 1.6;
+  ferry.add(hull);
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(22, 3.4, 6.8),
+    lambert(0xf2ede4)
+  );
+  deck.position.y = 4.8;
+  ferry.add(deck);
+  const windows = new THREE.Mesh(
+    new THREE.BoxGeometry(20, 1.1, 7),
+    new THREE.MeshBasicMaterial({ color: 0xffc36a })
+  );
+  windows.position.y = 5.2;
+  ferry.add(windows);
+  const funnel = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.1, 1.3, 3.4, 8),
+    lambert(0xc23b2e)
+  );
+  funnel.position.set(-6, 8, 0);
+  ferry.add(funnel);
+  return ferry;
+}
+
+// Coastal village: a cluster of huts on one shore, each with a small
+// warm window quad that glows at dusk and night (setNightFactor
+// drives the shared window material).
+function makeVillage(rng, def) {
+  const village = new THREE.Group();
+  const windowMat = new THREE.MeshBasicMaterial({
+    color: 0xffc36a, transparent: true, opacity: 0.25,
+  });
+  const baseAngle = rng.range(0, Math.PI * 2);
+  for (let i = 0; i < 9; i++) {
+    const angle = baseAngle + (i / 9) * 1.1 - 0.55 + rng.range(-0.08, 0.08);
+    const dist = def.radius * rng.range(0.55, 0.72);
+    const hx = Math.cos(angle) * dist;
+    const hz = Math.sin(angle) * dist;
+    const hut = makeHut(rng);
+    hut.position.set(def.x + hx, islandHeightAt(def, hx, hz), def.z + hz);
+    hut.rotation.y = angle + Math.PI / 2 + rng.range(-0.3, 0.3);
+    const win = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.4, 1.2),
+      windowMat
+    );
+    win.position.set(0, 1.8, 3.6);
+    hut.add(win);
+    village.add(hut);
+  }
+  return { group: village, windowMat };
+}
+
+// Lighthouse on the rocky island: white tower with red bands, a lamp
+// room, and a long additive beam that sweeps around (rotated by
+// effects.js). The beam is the night-run landmark.
+function makeLighthouse(x, z, groundY) {
+  const group = new THREE.Group();
+  group.position.set(x, groundY, z);
+  const tower = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.2, 3.4, 24, 10),
+    lambert(0xf2ede4, { flatShading: true })
+  );
+  tower.position.y = 12;
+  group.add(tower);
+  for (const y of [7, 15]) {
+    const band = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.6, 2.8, 3, 10),
+      lambert(0xc23b2e, { flatShading: true })
+    );
+    band.position.y = y;
+    group.add(band);
+  }
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(1.6, 8, 6), lampMat);
+  lamp.position.y = 25.5;
+  group.add(lamp);
+  const roof = new THREE.Mesh(
+    new THREE.ConeGeometry(2.4, 2.6, 8),
+    lambert(0x2b2f36, { flatShading: true })
+  );
+  roof.position.y = 28;
+  group.add(roof);
+  // Beam pivot at the lamp: a long horizontal cone, additive, so the
+  // sweep reads as light in the dark, not as a solid object.
+  const beamPivot = new THREE.Group();
+  beamPivot.position.y = 25.5;
+  const beamGeo = new THREE.ConeGeometry(7, 130, 10, 1, true);
+  beamGeo.rotateZ(-Math.PI / 2);
+  beamGeo.translate(65, 0, 0);
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0xffe9a8, transparent: true, opacity: 0.12,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const beam = new THREE.Mesh(beamGeo, beamMat);
+  beamPivot.add(beam);
+  group.add(beamPivot);
+  return { group, beamPivot, beamMat, lampMat };
+}
+
+// Morning mist: flat soft ellipses hugging the water near the shores
+// and along the flight line — the second fog layer (distance haze is
+// the scene fog; these are the low banks you fly over). One
+// InstancedMesh, drifting slowly east in effects.js.
+function makeMist(rng) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+  grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+  grad.addColorStop(0.6, 'rgba(255,255,255,0.35)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(canvas);
+  const COUNT = 16;
+  const geo = new THREE.CircleGeometry(1, 20);
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex, color: 0xffe8d0, transparent: true, opacity: 0.16,
+    depthWrite: false,
+  });
+  const mist = new THREE.InstancedMesh(geo, mat, COUNT);
+  mist.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const dummy = new THREE.Object3D();
+  const base = new Float32Array(COUNT * 3);
+  const scale = new Float32Array(COUNT * 3);
+  const speed = new Float32Array(COUNT);
+  const flatQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  for (let i = 0; i < COUNT; i++) {
+    // Half along the flight line (z = 330), half hugging island
+    // shores — the mist you actually fly through on a sortie.
+    let x, z;
+    if (i % 2 === 0) {
+      x = rng.range(-1400, 1400);
+      z = 330 + rng.range(-120, 120);
+    } else {
+      const isl = WORLD.islands[rng.int(0, WORLD.islands.length - 1)];
+      const a = rng.range(0, Math.PI * 2);
+      x = isl.x + Math.cos(a) * (isl.radius + rng.range(30, 120));
+      z = isl.z + Math.sin(a) * (isl.radius + rng.range(30, 120));
+    }
+    const y = rng.range(6, 16);
+    const sx = rng.range(70, 140);
+    const sz = rng.range(40, 70);
+    base[i * 3] = x;
+    base[i * 3 + 1] = y;
+    base[i * 3 + 2] = z;
+    scale[i * 3] = sx;
+    scale[i * 3 + 1] = sz;
+    scale[i * 3 + 2] = 1;
+    speed[i] = rng.range(1.0, 2.2);
+    dummy.position.set(x, y, z);
+    dummy.quaternion.copy(flatQuat);
+    dummy.scale.set(sx, sz, 1);
+    dummy.updateMatrix();
+    mist.setMatrixAt(i, dummy.matrix);
+  }
+  mist.instanceMatrix.needsUpdate = true;
+  mist.userData.mistDrift = { base, scale, speed, quat: flatQuat };
+  mist.renderOrder = 1;
+  return mist;
+}
+
 // Build the whole archipelago and return every piece the game needs.
 export function buildWorld(rng) {
   const group = new THREE.Group();
@@ -1221,12 +1542,17 @@ function shadowify(group) {
 }
 
   // The five named islands.
+  const palmSpecs = [];
+  const bushSpecs = [];
   const islands = WORLD.islands.map((def) => {
-    const island = makeIsland(def, rng);
+    const island = makeIsland(def, rng, palmSpecs, bushSpecs);
     shadowify(island);
     group.add(island);
     return island;
   });
+  // Instanced vegetation: all palms and bushes in 3 draw calls.
+  group.add(buildInstancedPalms(palmSpecs));
+  group.add(buildInstancedBushes(bushSpecs));
 
   // Coastal runway on Garuda.
   const runway = makeRunway(WORLD.runway);
@@ -1234,13 +1560,13 @@ function shadowify(group) {
   group.add(runway);
 
   // 8 orange target rings, 6 red storm rings, 3 green fuel rings.
-  const rings = WORLD.rings.map((def) => {
-    const ring = makeRing(def, PALETTE.ringOrange, 0);
+  const rings = WORLD.rings.map((def, i) => {
+    const ring = makeRing(def, PALETTE.ringOrange, 0, i + 1);
     group.add(ring);
     return ring;
   });
-  const stormRings = WORLD.stormRings.map((def) => {
-    const ring = makeRing(def, PALETTE.stormRed, 0.08);
+  const stormRings = WORLD.stormRings.map((def, i) => {
+    const ring = makeRing(def, PALETTE.stormRed, 0.08, i + 1);
     group.add(ring);
     return ring;
   });
@@ -1248,23 +1574,23 @@ function shadowify(group) {
   // at a glance which line is theirs: teal for the crosswind strait,
   // amber for the canyon, white for the time trial, violet for the
   // intercept gates.
-  const crosswindRings = (WORLD.crosswindRings || []).map((def) => {
-    const ring = makeRing(def, 0x2fb3a0, 0);
+  const crosswindRings = (WORLD.crosswindRings || []).map((def, i) => {
+    const ring = makeRing(def, 0x2fb3a0, 0, i + 1);
     group.add(ring);
     return ring;
   });
-  const canyonRings = (WORLD.canyonRings || []).map((def) => {
-    const ring = makeRing(def, 0xffc93c, 0);
+  const canyonRings = (WORLD.canyonRings || []).map((def, i) => {
+    const ring = makeRing(def, 0xffc93c, 0, i + 1);
     group.add(ring);
     return ring;
   });
-  const timeTrialRings = (WORLD.timeTrialRings || []).map((def) => {
-    const ring = makeRing(def, 0xf5f2e8, 0);
+  const timeTrialRings = (WORLD.timeTrialRings || []).map((def, i) => {
+    const ring = makeRing(def, 0xf5f2e8, 0, i + 1);
     group.add(ring);
     return ring;
   });
-  const chaseGates = (WORLD.chaseGates || []).map((def) => {
-    const ring = makeRing(def, 0xb07bff, 0);
+  const chaseGates = (WORLD.chaseGates || []).map((def, i) => {
+    const ring = makeRing(def, 0xb07bff, 0, i + 1);
     group.add(ring);
     return ring;
   });
@@ -1310,6 +1636,45 @@ function shadowify(group) {
   group.add(cloudSet.lowHalo);
   group.add(cloudSet.blobs);
 
+  // Small life on the water: fishing boats scattered between the
+  // islands, one ferry crossing off Garuda's south shore.
+  const boatSpots = [
+    [-500, 820, 0.6], [300, 950, -0.4], [950, 250, 1.8],
+    [-1250, -650, 2.6], [650, -1450, -1.2], [1550, 650, 0.9],
+  ];
+  for (const [bx, bz, heading] of boatSpots) {
+    const boat = makeFishingBoat();
+    boat.position.set(bx + rng.range(-40, 40), 0.4, bz + rng.range(-40, 40));
+    boat.rotation.y = heading + rng.range(-0.3, 0.3);
+    shadowify(boat);
+    group.add(boat);
+  }
+  const ferry = makeFerry();
+  ferry.position.set(-120, 0.6, 980);
+  ferry.rotation.y = -0.5;
+  shadowify(ferry);
+  group.add(ferry);
+
+  // Coastal village on Garuda's shore, windows warm at dusk/night.
+  const garudaDef = WORLD.islands.find((d) => d.name === 'Garuda');
+  const village = garudaDef ? makeVillage(rng, garudaDef) : null;
+  if (village) group.add(village.group);
+
+  // Lighthouse on the rocky island, beam sweeping at night.
+  const karangDef = WORLD.islands.find((d) => d.name === 'Batu Karang');
+  let lighthouse = null;
+  if (karangDef) {
+    const lx = karangDef.x + 40;
+    const lz = karangDef.z - 30;
+    lighthouse = makeLighthouse(lx, lz, Math.max(2, islandHeightAt(karangDef, 40, -30)));
+    shadowify(lighthouse.group);
+    group.add(lighthouse.group);
+  }
+
+  // Morning mist banks: the second fog layer, low over the water.
+  const mist = makeMist(rng);
+  group.add(mist);
+
   const world = {
     group,
     islands,
@@ -1337,9 +1702,13 @@ function shadowify(group) {
     cloudBlobs: cloudSet.blobs,
     sea,
     glint,
+    mist,
+    lighthouseBeam: lighthouse ? lighthouse.beamPivot : null,
     // R4-3: runway edge lights carry the runway at night — brighter
     // (colour pushed past 1) and bigger as the night factor rises.
     // MeshBasicMaterial is unlit, so the colour scale reads as glow.
+    // R2-3: the village windows warm up and the lighthouse beam
+    // strengthens with the same factor.
     setNightFactor(f) {
       const nf = Math.max(0, Math.min(1, f || 0));
       const mat = runway.userData.edgeLightMat;
@@ -1348,6 +1717,11 @@ function shadowify(group) {
       }
       const bulbs = runway.userData.edgeBulbs || [];
       for (const b of bulbs) b.scale.setScalar(1 + nf * 0.9);
+      if (village) village.windowMat.opacity = 0.25 + nf * 0.75;
+      if (lighthouse) {
+        lighthouse.beamMat.opacity = 0.1 + nf * 0.5;
+        lighthouse.lampMat.color.setHex(0xfff2b0).multiplyScalar(1 + nf * 1.5);
+      }
     },
     // The nth target ring (0-based), or undefined past the end.
     ringAt(i) {

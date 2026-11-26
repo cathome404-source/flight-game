@@ -193,6 +193,27 @@ export function createEffects(scene, world) {
         if (world.cloudBlobs) driftLayer(world.cloudBlobs, dt);
       }
 
+      // --- Morning mist banks drift east too, slower and lower than
+      // the clouds, staying flat on the water (their fixed flat
+      // quaternion is kept — driftLayer would stand them upright).
+      if (world && world.mist && world.mist.userData.mistDrift) {
+        const drift = world.mist.userData.mistDrift;
+        for (let i = 0; i < drift.speed.length; i++) {
+          const x = wrapX(drift.base[i * 3] + drift.speed[i] * cloudTime);
+          dummy.position.set(x, drift.base[i * 3 + 1], drift.base[i * 3 + 2]);
+          dummy.quaternion.copy(drift.quat);
+          dummy.scale.set(drift.scale[i * 3], drift.scale[i * 3 + 1], 1);
+          dummy.updateMatrix();
+          world.mist.setMatrixAt(i, dummy.matrix);
+        }
+        world.mist.instanceMatrix.needsUpdate = true;
+      }
+
+      // --- Lighthouse beam sweeps slowly around its tower.
+      if (world && world.lighthouseBeam) {
+        world.lighthouseBeam.rotation.y += dt * 0.6;
+      }
+
       // --- In-cloud fog: nearest flight-line cluster decides how white
       // the view goes (0 outside, 1 deep inside). The fog eases in and
       // out so entering a puff never snaps. Puffs stay soft from the

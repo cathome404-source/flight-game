@@ -42,16 +42,40 @@ const SHAPE = {
   },
 };
 
+// R2-3: all aircraft materials are MeshStandardMaterial now — real
+// roughness/metalness under the low sun, so the skin glints, the
+// metal spinner shines and the canopy glass reads as glass, instead
+// of the flat Lambert/Phong look. Same livery colours, PBR response.
+function standard(color, extra) {
+  return new THREE.MeshStandardMaterial(Object.assign({ color }, extra || {}));
+}
+
 function lambert(color, extra) {
-  return new THREE.MeshLambertMaterial(Object.assign({ color }, extra || {}));
+  return standard(color, extra);
 }
 
 function phong(color, extra) {
-  return new THREE.MeshPhongMaterial(Object.assign({ color }, extra || {}));
+  return standard(color, extra);
 }
 
 function slab(w, h, d, material) {
   return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+}
+
+// Soft radial glow texture (canvas, no image file) for the
+// afterburner halo.
+function makeGlowTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255, 210, 120, 1)');
+  grad.addColorStop(0.35, 'rgba(255, 150, 50, 0.55)');
+  grad.addColorStop(1, 'rgba(255, 120, 30, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(canvas);
 }
 
 // Build one aircraft by id ('cendrawasih' | 'rajawali' | 'komodo').
@@ -65,18 +89,22 @@ export function makeAircraft(id) {
   const group = new THREE.Group();
   group.name = 'aircraft-' + key;
 
-  const skin = phong(liv.skin, { shininess: 60, specular: 0x8a7a55 });
-  const accent = phong(liv.accent, { shininess: 45, specular: 0x7a3a18 });
-  const accentDark = lambert(liv.accentDark);
-  const band = lambert(liv.band);
-  const metal = phong(0x8f969e, { shininess: 70 });
-  const dark = lambert(0x2b2f36);
-  const bladeMat = lambert(0x23272e, { transparent: true });
-  const glass = phong(0x1c2f42, {
-    shininess: 220, specular: 0xffe9b0, flatShading: true,
+  // Low metalness on the painted skin (0.15): at dusk the first
+  // 0.35 value washed the livery out to grey-purple under the violet
+  // sky light — paint is dielectric, the shine comes from the metal
+  // parts (spinner, struts) and the glass, not the fuselage.
+  const skin = standard(liv.skin, { roughness: 0.45, metalness: 0.15 });
+  const accent = standard(liv.accent, { roughness: 0.5, metalness: 0.15 });
+  const accentDark = standard(liv.accentDark, { roughness: 0.6, metalness: 0.1 });
+  const band = standard(liv.band, { roughness: 0.5, metalness: 0.15 });
+  const metal = standard(0x8f969e, { roughness: 0.32, metalness: 0.85 });
+  const dark = standard(0x2b2f36, { roughness: 0.75, metalness: 0.2 });
+  const bladeMat = standard(0x23272e, { roughness: 0.6, metalness: 0.4, transparent: true });
+  const glass = standard(0x1c2f42, {
+    roughness: 0.12, metalness: 0.15, flatShading: true,
     transparent: true, opacity: 0.88,
   });
-  const panelDark = lambert(0x3a2e22);
+  const panelDark = standard(0x3a2e22, { roughness: 0.85, metalness: 0.1 });
 
   const fusFront = -sh.fusLen / 2;
   const fusBack = sh.fusLen / 2;
@@ -336,9 +364,50 @@ export function makeAircraft(id) {
     navLights[def.key] = bulb;
   }
 
-  // Shadows on, except the translucent blur disc and the glass canopy.
+  // --- Afterburner (Rajawali only): a flickering flame tongue + hot
+  // core + glow halo + point light at the tail, driven by throttle
+  // in update(). Fully off below 80% throttle, full blast at 100%.
+  let afterburner = null;
+  if (key === 'rajawali') {
+    const flameMat = new THREE.MeshBasicMaterial({
+      color: 0xff8a2a, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.55, 2.6, 10), flameMat);
+    flame.rotation.x = Math.PI / 2;
+    flame.position.set(0, 0.1, 5.3);
+    flame.visible = false;
+    group.add(flame);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xffd76a, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const core = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.8, 8), coreMat);
+    core.rotation.x = Math.PI / 2;
+    core.position.set(0, 0.1, 4.9);
+    core.visible = false;
+    group.add(core);
+    const glowMat = new THREE.SpriteMaterial({
+      map: makeGlowTexture(), color: 0xffa63c, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const glow = new THREE.Sprite(glowMat);
+    glow.position.set(0, 0.1, 5.0);
+    glow.scale.set(4, 4, 1);
+    glow.visible = false;
+    group.add(glow);
+    const light = new THREE.PointLight(0xff8a2a, 0, 45, 2);
+    light.position.set(0, 0.1, 5.5);
+    group.add(light);
+    afterburner = { flame, flameMat, core, coreMat, glow, glowMat, light };
+  }
+
+  // Shadows on, except the translucent blur disc and the glass canopy
+  // — and except any transparent part (afterburner flame/core, soot):
+  // a transparent additive cone must never cast a solid shadow.
   group.traverse((obj) => {
-    if (obj.isMesh && obj !== blurDisc && obj !== canopy) {
+    if (obj.isMesh && obj !== blurDisc && obj !== canopy
+      && !(obj.material && obj.material.transparent)) {
       obj.castShadow = true;
       obj.receiveShadow = true;
     }
@@ -359,6 +428,7 @@ export function makeAircraft(id) {
     navLights,
     gearPivots,
     tailWheel,
+    afterburner,
     gear: 1,
     throttle: 0,
     propAngle: 0,
@@ -428,6 +498,30 @@ export function makeAircraft(id) {
         const dim = k === 'left' ? 0x4a0d06 : k === 'right' ? 0x0a3d18 : 0x6b6250;
         navLights[k].material.color.setHex(on ? base : dim);
         navLights[k].scale.setScalar(on ? 1 : 0.7);
+      }
+
+      // Afterburner (Rajawali only): wakes past 80% throttle and
+      // flickers like a real flame tongue — the cone's length axis is
+      // local Y (rotated to point backwards), so scale.y stretches
+      // the flame while the glow sprite and point light pulse with it.
+      if (afterburner) {
+        const ab = Math.max(0, Math.min(1, (plane.throttle - 0.8) / 0.2));
+        const flick = 0.85 + 0.22 * Math.sin(t * 47) + 0.12 * Math.sin(t * 31 + 1.7);
+        const on = ab > 0.02;
+        afterburner.flame.visible = on;
+        afterburner.core.visible = on;
+        afterburner.glow.visible = on;
+        if (on) {
+          afterburner.flame.scale.set(1, ab * flick, 1);
+          afterburner.flameMat.opacity = ab * 0.85;
+          afterburner.core.scale.set(1, ab * flick * 0.9, 1);
+          afterburner.coreMat.opacity = ab * 0.95;
+          afterburner.glowMat.opacity = ab * 0.7;
+          afterburner.glow.scale.set(4 * flick, 4 * flick, 1);
+          afterburner.light.intensity = ab * 7 * flick;
+        } else {
+          afterburner.light.intensity = 0;
+        }
       }
     },
   };

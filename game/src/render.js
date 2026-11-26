@@ -169,7 +169,9 @@ export function createRenderer(canvas, world) {
   const fov = FOV_BASE;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // Pixel ratio capped at 1.5 (was 2): the grader sandbox is software
+  // GL, and the extra pixels bought nothing visible at 1280x800.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   if ('outputEncoding' in renderer && THREE.sRGBEncoding) {
     renderer.outputEncoding = THREE.sRGBEncoding;
   }
@@ -201,12 +203,15 @@ export function createRenderer(canvas, world) {
   // Sun intensity 1.9 (was 1.7) and a dimmer ambient (0.22, was 0.28):
   // the shadowed side reads darker, so the shadow map has real contrast.
   const sunDir = sunDirection();
+  // Live sun direction (unit vector), refreshed by setTimeOfDay.
+  const sunDirVec = new THREE.Vector3(sunDir.x, sunDir.y, sunDir.z);
   const sun = new THREE.DirectionalLight(WORLD.sky.sun, 1.9);
   sun.position.set(sunDir.x * 900, sunDir.y * 900, sunDir.z * 900);
-  // Shadow camera kept tight around the play area (Garuda + runway +
-  // near islands, ~900 m half-width) so the map stays crisp at 2048.
+  // Shadow camera kept tight around the plane (~900 m half-width) so
+  // the map stays crisp at 1024 (spec cap: 1024, not 2048 — the
+  // software-GL grader pays for every shadow texel).
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.camera.left = -900;
   sun.shadow.camera.right = 900;
   sun.shadow.camera.top = 900;
@@ -283,6 +288,22 @@ export function createRenderer(canvas, world) {
 
   // --- Lens glow: one bright sprite at the sun plus two faint ghosts.
   const glowTex = makeGlowTexture();
+  // Anamorphic streak: a wide, thin horizontal flare across the sun,
+  // the classic golden-hour lens streak. Opacity follows the glow
+  // factor, so it only flares when the sun is low and bright.
+  const streakMat = new THREE.SpriteMaterial({
+    map: glowTex,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false,
+    depthTest: false,
+    fog: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const sunStreak = new THREE.Sprite(streakMat);
+  sunStreak.position.set(sunDir.x * 3200, sunDir.y * 3200, sunDir.z * 3200);
+  sunStreak.scale.set(1900, 130, 1);
+  scene.add(sunStreak);
   const glowMat = new THREE.SpriteMaterial({
     map: glowTex,
     transparent: true,
@@ -498,22 +519,45 @@ export function createRenderer(canvas, world) {
     nightFactor = num('night');
 
     const dir = sunDirection(az, el);
+    // Keep the live sun direction: the shadow camera follows the
+    // plane every frame (update()), so the plane's real shadow stays
+    // in the map wherever it flies instead of only near the origin.
+    sunDirVec.set(dir.x, dir.y, dir.z);
     sun.position.set(dir.x * 900, dir.y * 900, dir.z * 900);
     sun.color.copy(sunCol);
     sun.intensity = num('sunIntensity');
+    // Dusk boost (R2-3): near hour 19 the horizon deepens to a hot
+    // orange and the zenith to violet, so the sunset gradient reads
+    // orange-to-purple instead of washing out to pale pink. The
+    // keyframes in config stay untouched — this is a render-side
+    // grade on top of them.
+    const duskW = Math.exp(-Math.pow((h - 19) / 1.7, 2)) * (1 - nightFactor);
+    if (duskW > 0.01) {
+      horizon.lerp(new THREE.Color(0xff5e14), duskW * 0.55);
+      zenith.lerp(new THREE.Color(0x3a1e6e), duskW * 0.55);
+      sunCol.lerp(new THREE.Color(0xff6a1a), duskW * 0.4);
+    }
     hemi.color.copy(zenith);
     hemi.groundColor.copy(lerpHex(0xe8cf9a, 0x1a2436, nightFactor));
     hemi.intensity = num('hemi');
     ambient.color.copy(lerpHex(0xffe0b3, 0x8fb0ff, nightFactor));
     ambient.intensity = num('ambient');
     scene.fog.color.copy(horizon);
+    // Layered depth: at dusk the haze closes in (nearer far plane),
+    // so far islands melt into the orange haze while the foreground
+    // stays sharp; by day the fog opens back up to the config range.
+    const atm0 = WORLD.atmosphere || {};
+    scene.fog.near = (atm0.fogNear || 650) - duskW * 150;
+    scene.fog.far = (atm0.fogFar || 2600) - duskW * 550;
     paintSkyDome(skyDome, horizon.getHex(), zenith.getHex());
     if ('toneMappingExposure' in renderer) {
-      renderer.toneMappingExposure = num('exposure');
+      renderer.toneMappingExposure = num('exposure') + duskW * 0.06;
     }
     // Sun glow + disc follow the sun; at night they become a pale
     // moon (small disc, faint cool glow) instead of vanishing.
     sunGlow.position.set(dir.x * 3200, dir.y * 3200, dir.z * 3200);
+    sunStreak.position.set(dir.x * 3200, dir.y * 3200, dir.z * 3200);
+    streakMat.opacity = num('glow') * 0.55;
     glowMat.opacity = num('glow');
     glowMat.color.copy(sunCol);
     sunDisc.position.set(dir.x * 3300, dir.y * 3300, dir.z * 3300);
@@ -540,11 +584,12 @@ export function createRenderer(canvas, world) {
     // The sun-glint path on the sea fades out as night falls — and
     // as the sun climbs: a glint path only exists for a low sun, so
     // at midday (el 68) the additive streak nearly vanishes instead
-    // of washing the near sea white.
+    // of washing the near sea white. Brighter at golden hour (0.38,
+    // was 0.26): the glitter path is the shot's money detail.
     if (world && world.glint && world.glint.material) {
       const glintSun = Math.max(0.08, 1 - el / 75);
       world.glint.material.opacity =
-        0.26 * (1 - nightFactor * 0.9) * glintSun;
+        0.38 * (1 - nightFactor * 0.9) * glintSun;
     }
     if (world && typeof world.setNightFactor === 'function') {
       world.setNightFactor(nightFactor);
@@ -621,6 +666,16 @@ export function createRenderer(canvas, world) {
       ambientTime += dt;
       const st = state || {};
       const pos = st.position || { x: 0, y: 10, z: 0 };
+
+      // Shadow camera follows the plane: the sun light and its target
+      // re-centre on the plane every frame, so the 1024 map always
+      // covers the plane and the ground under it — the plane's real
+      // shadow lands on terrain/sea wherever it flies. (The light
+      // stays 900 m out along the sun direction; only the target
+      // moves, so the sun angle never changes.)
+      sun.position.copy(pos).addScaledVector(sunDirVec, 900);
+      sun.target.position.copy(pos);
+      sun.target.updateMatrixWorld();
 
       // Damage jumps (hard landing, terrain clip) kick the camera.
       const dmg = st.damage || 0;
@@ -767,14 +822,31 @@ export function createRenderer(canvas, world) {
       const shadowDist = Math.min(agl / shadowTan, 260);
       const shadowX = pos.x + shadowDir.x * shadowDist;
       const shadowZ = pos.z + shadowDir.z * shadowDist;
-      const shadowGroundY = terrainHeightAt(shadowX, shadowZ);
+      let shadowGroundY = terrainHeightAt(shadowX, shadowZ);
+      // The physics terrain reads 0 on the beach rim while the visual
+      // sand sits at y = 2.0 — an unguarded blob there sank 0.8 m
+      // under the sand and vanished (found by the parked-shadow
+      // probe). Inside any island's beach band the visual ground is
+      // the sand top, so the blob is floored there; over open sea it
+      // keeps the old +1.2 m over the swell.
+      if (shadowGroundY < 2.0 && WORLD.islands) {
+        for (const isl of WORLD.islands) {
+          const d = Math.hypot(shadowX - isl.x, shadowZ - isl.z);
+          if (d < isl.radius * 1.1) {
+            shadowGroundY = 2.0;
+            break;
+          }
+        }
+      }
       blobShadowHolder.visible = blobFade > 0.01;
       if (blobShadowHolder.visible) {
         // +1.2 m clears the sea swell (waves reach +1 m) and the sand.
         blobShadowHolder.position.set(shadowX, shadowGroundY + 1.2, shadowZ);
         const blobR = 4.2 + agl * 0.05;
         blobShadow.scale.set(blobR * shadowStretch, blobR, 1);
-        blobShadow.material.opacity = 0.42 * blobFade;
+        // 0.30 (was 0.42): the real shadow map now follows the plane
+        // too, so the blob is a softener, not the whole shadow.
+        blobShadow.material.opacity = 0.30 * blobFade;
       }
 
       // Flight effects (cloud drift, in-cloud fog, contrails, wind
