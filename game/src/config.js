@@ -159,13 +159,31 @@ export const WORLD = {
     { x: 100, z: -600, y: 100, radius: 16 },
   ],
   // Golden-hour sun direction (low in the west) and sky colours.
-  // Elevation 11.5 deg, lowered from 14: shadows stretch ~2.4x longer
-  // than at 14 deg and the light reads warmer at golden hour.
-  sun: { azimuth: 262, elevation: 11.5 },
+  // Elevation 10.5 deg, lowered from 11.5: shadows stretch longer
+  // and the low light rakes across the terrain relief, so one side
+  // of each hill lights up and the other falls into shade.
+  sun: { azimuth: 262, elevation: 10.5 },
   sky: {
     horizon: 0xffb36b,
     zenith: 0x2e4a7a,
     sun: 0xffd27a,
+  },
+  // Terrain relief (H1): how deep the valleys cut into each island's
+  // cone, where the rim cliffs start, and how far the haze reaches.
+  terrain: {
+    // Valleys cut to (1 - relief) of the island cone height; ridges
+    // keep the full cone height. 0.5 = up to ~105 m of relief on the
+    // volcanic island, ~23 m on the home island.
+    relief: 0.5,
+    // Past this fraction of the island radius the slope falls steeply
+    // to the beach — the rim cliffs.
+    rimCliffStart: 0.88,
+  },
+  atmosphere: {
+    // Distance fog: nearer and shorter than before, so far islands
+    // melt into the warm haze while the foreground stays sharp.
+    fogNear: 650,
+    fogFar: 2600,
   },
 };
 

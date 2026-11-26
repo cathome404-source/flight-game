@@ -42,6 +42,150 @@ function phong(color, extra) {
   return new THREE.MeshPhongMaterial(Object.assign({ color }, extra || {}));
 }
 
+// --- Terrain relief (H1): deterministic value noise + heightmap ---
+// A tiny hash-based value noise (no Math.random, so the islands are
+// identical every load). Three octaves give rolling hills with
+// smaller bumps layered on top; per-island seed offsets keep the
+// islands distinct from each other.
+
+function hash2(ix, iz, seed) {
+  const h = Math.sin(ix * 127.1 + iz * 311.7 + seed * 74.7) * 43758.5453;
+  return h - Math.floor(h);
+}
+
+function valueNoise(x, z, seed) {
+  const ix = Math.floor(x);
+  const iz = Math.floor(z);
+  const fx = x - ix;
+  const fz = z - iz;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sz = fz * fz * (3 - 2 * fz);
+  const a = hash2(ix, iz, seed);
+  const b = hash2(ix + 1, iz, seed);
+  const c = hash2(ix, iz + 1, seed);
+  const d = hash2(ix + 1, iz + 1, seed);
+  return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
+}
+
+// Multi-octave rolling noise in [0, 1]: big swells (~220 m) with
+// medium (~110 m), small (~55 m) and fine (~28 m) bumps layered on
+// top, so the hills read at chase-cam distance instead of only as
+// broad swells from far away.
+function fbmRelief(x, z, seed) {
+  return (
+    valueNoise(x * 0.0045, z * 0.0045, seed) * 0.5 +
+    valueNoise(x * 0.009, z * 0.009, seed + 13) * 0.28 +
+    valueNoise(x * 0.018, z * 0.018, seed + 29) * 0.14 +
+    valueNoise(x * 0.036, z * 0.036, seed + 47) * 0.08
+  );
+}
+
+function smooth01(t) {
+  const c = t < 0 ? 0 : t > 1 ? 1 : t;
+  return c * c * (3 - 2 * c);
+}
+
+// Height of the island's relief surface at local (lx, lz), metres
+// above sea level. The base is the island cone from flight.js, so the
+// relief never rises above the physics terrain: valleys carve down
+// from the cone (up to WORLD.terrain.relief), ridges keep its full
+// height, the rim falls steeply to the beach, and the tall volcanic
+// island gets a shallow crater at its peak. Outside the island the
+// surface drops below the sea so no flat skirt z-fights the water.
+function islandHeightAt(def, lx, lz) {
+  const R = def.radius;
+  const dist = Math.sqrt(lx * lx + lz * lz);
+  const t = dist / R;
+  if (t >= 1) return -1;
+  const relief = (WORLD.terrain && WORLD.terrain.relief) || 0.45;
+  const seed = def.x * 0.37 + def.z * 0.61;
+  const n = fbmRelief(lx + def.x, lz + def.z, seed);
+  let h = def.height * (1 - t) * (1 - relief + relief * n);
+  // Crater dip: the volcanic peak sags a little at the very top.
+  if (def.height > 120 && t < 0.1) {
+    h *= 0.82 + 0.18 * (t / 0.1);
+  }
+  // Rim cliffs: past rimCliffStart the slope dives to the beach.
+  const rim = (WORLD.terrain && WORLD.terrain.rimCliffStart) || 0.88;
+  if (t > rim) {
+    h *= 1 - smooth01((t - rim) / (1 - rim)) * 0.85;
+  }
+  return Math.max(h, 1.2);
+}
+
+// Colour of one terrain vertex: sand low by the beach, light then
+// deep green up the slopes, brown-grey rock on the high peaks and on
+// any steep slope (cliffs), with a few percent of noise jitter so the
+// surface is not one flat tint.
+const _cSand = new THREE.Color(PALETTE.sand);
+const _cGrassLight = new THREE.Color(PALETTE.grassLight);
+const _cGrassDeep = new THREE.Color(PALETTE.grassDeep);
+const _cRock = new THREE.Color(PALETTE.rock);
+const _cVolcano = new THREE.Color(PALETTE.volcano);
+
+function terrainVertexColor(def, h, slope, jitter, out) {
+  const high = 0.62 * def.height;
+  const peak = 0.85 * def.height;
+  if (h < 2.5) {
+    out.copy(_cSand);
+  } else if (h < 7) {
+    out.copy(_cSand).lerp(_cGrassLight, smooth01((h - 2.5) / 4.5));
+  } else if (h < high) {
+    out.copy(_cGrassLight).lerp(_cGrassDeep, smooth01((h - 7) / Math.max(1, high - 7)));
+  } else if (h < peak) {
+    out.copy(_cGrassDeep).lerp(_cRock, smooth01((h - high) / Math.max(1, peak - high)));
+  } else {
+    out.copy(_cRock).lerp(_cVolcano, smooth01((h - peak) / Math.max(1, def.height - peak)));
+  }
+  // Steep ground reads as bare rock whatever its height: cliffs.
+  if (slope > 0.55) {
+    out.lerp(_cRock, smooth01((slope - 0.55) / 0.45) * 0.8);
+  }
+  // Jitter lightness a few percent so facets vary.
+  out.multiplyScalar(1 + (jitter - 0.5) * 0.12);
+  return out;
+}
+
+// The island as a real heightmap: a grid displaced by islandHeightAt,
+// vertex-coloured by height and slope, flat-shaded so every facet
+// catches the low sun differently. Hills, valleys and rim cliffs are
+// part of the ground now, not cones stuck on top of it.
+function makeReliefTerrain(def) {
+  const R = def.radius;
+  const SEG = 56;
+  const size = R * 2;
+  const geo = new THREE.PlaneGeometry(size, size, SEG, SEG);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  const colours = new Float32Array(pos.count * 3);
+  const tmp = new THREE.Color();
+  const e = 8;
+  for (let i = 0; i < pos.count; i++) {
+    const lx = pos.getX(i);
+    const lz = pos.getZ(i);
+    const h = islandHeightAt(def, lx, lz);
+    pos.setY(i, h);
+    const sx = (islandHeightAt(def, lx + e, lz) - islandHeightAt(def, lx - e, lz)) / (2 * e);
+    const sz = (islandHeightAt(def, lx, lz + e) - islandHeightAt(def, lx, lz - e)) / (2 * e);
+    const slope = Math.sqrt(sx * sx + sz * sz);
+    const jitter = fbmRelief(lx * 2.3 + 40, lz * 2.3 - 17, def.x * 0.11 + def.z * 0.23);
+    terrainVertexColor(def, h, slope, jitter, tmp);
+    colours[i * 3] = tmp.r;
+    colours[i * 3 + 1] = tmp.g;
+    colours[i * 3 + 2] = tmp.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+  // Normals from the displaced surface, so the low sun lights one
+  // side of each hill and leaves the other in shade.
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(
+    geo,
+    lambert(0xffffff, { vertexColors: true, flatShading: true })
+  );
+  mesh.position.y = 0;
+  return mesh;
+}
+
 // A low-poly hill: a cone with a few radial segments, squashed flat.
 function makeHill(radius, height, color, segments) {
   const geo = new THREE.ConeGeometry(radius, height, segments || 7);
@@ -156,41 +300,12 @@ function makeIsland(def, rng) {
   foam.position.y = 1.3;
   island.add(foam);
 
-  // Main landmass: a low-poly cone; low islands vary between three
-  // greens so the hills read as mixed vegetation, not one flat colour.
-  const greens = [PALETTE.grass, PALETTE.grassDeep, PALETTE.grassLight];
-  const mainColor =
-    def.height > 120
-      ? PALETTE.volcano
-      : greens[rng.int(0, greens.length - 1)];
-  const land = makeHill(def.radius * 0.92, def.height, mainColor, 9);
-  land.position.y = def.height / 2 + 1;
+  // Main landmass: a real heightmap — rolling multi-octave hills,
+  // valleys between them, a cratered volcanic peak on the tall island
+  // and steep rim cliffs down to the beach — vertex-coloured by
+  // height and slope so the relief reads even at a glance.
+  const land = makeReliefTerrain(def);
   island.add(land);
-
-  // Grassy cap on the tall volcanic island.
-  if (def.height > 120) {
-    const cap = new THREE.Mesh(
-      new THREE.ConeGeometry(def.radius * 0.3, def.height * 0.35, 7),
-      lambert(PALETTE.grassDry, { flatShading: true })
-    );
-    cap.position.y = def.height * 0.82;
-    island.add(cap);
-  }
-
-  // A couple of smaller hills scattered on the bigger islands.
-  const extraHills = def.radius > 400 ? 3 : 1;
-  for (let i = 0; i < extraHills; i++) {
-    const angle = rng.range(0, Math.PI * 2);
-    const dist = rng.range(def.radius * 0.25, def.radius * 0.6);
-    const hill = makeHill(
-      rng.range(def.radius * 0.18, def.radius * 0.3),
-      rng.range(def.height * 0.25, def.height * 0.5),
-      rng.pick([PALETTE.grass, PALETTE.grassDry, PALETTE.grassDeep, PALETTE.grassLight]),
-      6
-    );
-    hill.position.set(Math.cos(angle) * dist, 1, Math.sin(angle) * dist);
-    island.add(hill);
-  }
 
   // Palm trees ring the beach; a few more inland on the low islands.
   // Denser than before (radius/38) so the islands read as inhabited
@@ -199,8 +314,19 @@ function makeIsland(def, rng) {
   for (let i = 0; i < palmCount; i++) {
     const angle = rng.range(0, Math.PI * 2);
     const dist = rng.range(def.radius * 0.62, def.radius * 0.9);
+    const px = Math.cos(angle) * dist;
+    const pz = Math.sin(angle) * dist;
+    // Never plant a palm on the runway strip.
+    if (
+      def.name === 'Garuda' &&
+      Math.abs(px - WORLD.runway.x) <= WORLD.runway.length / 2 + 12 &&
+      Math.abs(pz - WORLD.runway.z) <= WORLD.runway.width / 2 + 12
+    ) {
+      continue;
+    }
     const palm = makePalm(rng);
-    palm.position.set(Math.cos(angle) * dist, 1.5, Math.sin(angle) * dist);
+    // Palms stand on the relief surface, not on a flat beach line.
+    palm.position.set(px, islandHeightAt(def, px, pz), pz);
     palm.rotation.y = rng.range(0, Math.PI * 2);
     const s = rng.range(0.8, 1.3);
     palm.scale.set(s, s, s);
@@ -212,8 +338,19 @@ function makeIsland(def, rng) {
   for (let i = 0; i < hutCount; i++) {
     const angle = rng.range(0, Math.PI * 2);
     const dist = rng.range(def.radius * 0.45, def.radius * 0.75);
+    const hx = Math.cos(angle) * dist;
+    const hz = Math.sin(angle) * dist;
+    // Never build a hut on the runway strip.
+    if (
+      def.name === 'Garuda' &&
+      Math.abs(hx - WORLD.runway.x) <= WORLD.runway.length / 2 + 12 &&
+      Math.abs(hz - WORLD.runway.z) <= WORLD.runway.width / 2 + 12
+    ) {
+      continue;
+    }
     const hut = makeHut(rng);
-    hut.position.set(Math.cos(angle) * dist, 1.5, Math.sin(angle) * dist);
+    // Huts sit on the relief surface, following the hills.
+    hut.position.set(hx, islandHeightAt(def, hx, hz), hz);
     hut.rotation.y = rng.range(0, Math.PI * 2);
     island.add(hut);
   }

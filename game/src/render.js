@@ -62,6 +62,10 @@ function makeSkyDome() {
   const horizon = new THREE.Color(WORLD.sky.horizon);
   const zenith = new THREE.Color(WORLD.sky.zenith);
   const below = new THREE.Color(0x8a5a3a);
+  // Pale warm haze hugging the horizon: distant terrain fades into
+  // the same haze the fog uses, so the horizon melts instead of
+  // cutting hard — the far islands read pale and far away.
+  const haze = new THREE.Color(0xffd9a8);
   const pos = geo.attributes.position;
   const colours = new Float32Array(pos.count * 3);
   const tmp = new THREE.Color();
@@ -69,6 +73,7 @@ function makeSkyDome() {
     const y = pos.getY(i) / 3600;
     if (y >= 0) {
       tmp.copy(horizon).lerp(zenith, Math.pow(y, 0.6));
+      tmp.lerp(haze, (1 - Math.min(1, y * 8)) * 0.35);
     } else {
       tmp.copy(horizon).lerp(below, Math.min(1, -y * 3));
     }
@@ -104,7 +109,10 @@ export function createRenderer(canvas, world) {
   }
   if ('toneMapping' in renderer && THREE.ACESFilmicToneMapping) {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    // Exposure 1.05 (was 1.12): the low sun + bright sand blew the
+    // beach out to flat white; a touch less exposure keeps the sand
+    // and the terrain facets readable instead of clipped.
+    renderer.toneMappingExposure = 1.05;
   }
   // Shadows: the sun casts a PCF-soft shadow map; meshes opt in via
   // castShadow / receiveShadow (world.js, aircraft.js).
@@ -112,7 +120,11 @@ export function createRenderer(canvas, world) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(WORLD.sky.horizon, 900, 3400);
+  // Distance haze: nearer and shorter than before (config atmosphere),
+  // so far islands and the volcanic peak melt into warm haze while the
+  // foreground stays sharp — foreground/background depth at a glance.
+  const atm = WORLD.atmosphere || {};
+  scene.fog = new THREE.Fog(WORLD.sky.horizon, atm.fogNear || 650, atm.fogFar || 2600);
   scene.add(makeSkyDome());
   if (world && world.group) scene.add(world.group);
 
@@ -139,7 +151,10 @@ export function createRenderer(canvas, world) {
   scene.add(sun);
   scene.add(sun.target);
 
-  const hemi = new THREE.HemisphereLight(WORLD.sky.zenith, 0xe8cf9a, 0.85);
+  // Weaker sky bounce than before (0.72, was 0.85): the shaded side
+  // of each hill now reads clearly darker than the sunlit side, so
+  // the relief shades itself instead of being washed flat.
+  const hemi = new THREE.HemisphereLight(WORLD.sky.zenith, 0xe8cf9a, 0.72);
   scene.add(hemi);
 
   const ambient = new THREE.AmbientLight(0xffe0b3, 0.22);
