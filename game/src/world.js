@@ -872,7 +872,12 @@ export function buildWorld(rng) {
   // looked down on and bright, sky-reflecting at grazing angles near
   // the horizon; and a fine normal ripple, so the specular sparkle
   // shimmers instead of sitting frozen on the swell.
-  const seaMat = phong(0xffffff, { vertexColors: true, shininess: 55, specular: 0x99aabb });
+  const seaMat = phong(0xffffff, { vertexColors: true, shininess: 55, specular: 0x99aabb, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
+  // polygonOffset: at grazing angles the sea plane (y = 0) and the
+  // beach top (y = 2) are only ~0.2 m apart along the view ray, below
+  // the depth buffer's resolution at 1 km, so the sea showed through
+  // the beach in moire stripes. Pushing the sea's depth back lets the
+  // beach and terrain win wherever they overlap on screen.
   seaMat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = { value: 0 };
     shader.uniforms.uFresnelColor = { value: new THREE.Color(0xffc98a) };
@@ -973,15 +978,10 @@ export function buildWorld(rng) {
   const glint = makeGlintStreak();
   group.add(glint);
 
-  // A darker deep-water disc in the middle of the sea, for depth at range.
-  // Kept inside the sea plane so it never pokes out past the edges.
-  const deep = new THREE.Mesh(
-    new THREE.CircleGeometry(WORLD.seaSize * 0.45, 32),
-    lambert(PALETTE.seaDeep)
-  );
-  deep.rotation.x = -Math.PI / 2;
-  deep.position.y = -0.4;
-  group.add(deep);
+  // No separate deep-water disc under the sea: a disc 0.4 m below the
+  // sea plane z-fought with it at grazing angles (the cover shot's
+  // moire stripes on the open sea). The sea's own baked vertex-colour
+  // gradient already darkens deep water, so the disc added nothing.
 
 // Every opaque mesh in a group casts and receives shadows: terrain
 // shades terrain, palms and huts shade the sand, the runway catches
