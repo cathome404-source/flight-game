@@ -273,6 +273,9 @@ export function createRenderer(canvas, world) {
   camera.lookAt(0, 10, 330);
 
   let view = 'chase';
+  // H5: the attached aircraft, so setView can hide the prop in
+  // cockpit view (set in setAircraft below).
+  let aircraft = null;
   let lookYaw = 0;
   let lookPitch = 0;
   let shakeAmp = 0;
@@ -387,6 +390,7 @@ export function createRenderer(canvas, world) {
 
     // Attach the aircraft so the contrails can read its wingtips.
     setAircraft(ac) {
+      aircraft = ac;
       if (effects) effects.setAircraft(ac);
     },
 
@@ -394,6 +398,12 @@ export function createRenderer(canvas, world) {
       if (name !== 'cockpit' && name !== 'chase') return;
       if (name !== view) {
         view = name;
+        // H5: hide the prop (blades + tips + blur disc) from the
+        // pilot's own eye — in H4 it read as a grey pillar up the
+        // middle of the cockpit frame.
+        if (aircraft && typeof aircraft.setCockpit === 'function') {
+          aircraft.setCockpit(name === 'cockpit');
+        }
         // Fresh look direction on a view change, so the pilot is never
         // left staring sideways after toggling.
         lookYaw = 0;

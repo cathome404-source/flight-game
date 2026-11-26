@@ -859,25 +859,37 @@ function buildLayeredClouds(rng) {
 
   const layerDefs = [
     { key: 'cirrus', yMin: 300, yMax: 380, count: 80, rMin: 14, rMax: 26, flat: 0.3, color: 0xffe6bf, opacity: 0.8, driftMin: 1.5, driftMax: 3.0 },
-    { key: 'cumulus', yMin: 150, yMax: 230, count: 140, rMin: 16, rMax: 30, flat: 0.55, color: 0xfff3e0, opacity: 0.92, driftMin: 1.2, driftMax: 2.6 },
-    { key: 'low', yMin: 80, yMax: 130, count: 70, rMin: 12, rMax: 22, flat: 0.5, color: 0xf2dcae, opacity: 0.95, driftMin: 1.8, driftMax: 3.2 },
+    { key: 'cumulus', yMin: 150, yMax: 230, count: 140, rMin: 16, rMax: 30, flat: 0.8, color: 0xfff3e0, opacity: 0.92, driftMin: 1.2, driftMax: 2.6 },
+    { key: 'low', yMin: 80, yMax: 130, count: 70, rMin: 12, rMax: 22, flat: 0.75, color: 0xf2dcae, opacity: 0.95, driftMin: 1.8, driftMax: 3.2 },
+  ];
+
+  // H5: every puff is a cluster of 3 balls (core + 2 smaller caps
+  // stacked on top, varied sizes) instead of one flattened disc, so
+  // clouds read as round cumulus, not beige plates. The halo shell
+  // follows the same tripled instances.
+  const SUBS = 3;
+  const SUB_OFF = [
+    [0, 0, 0, 1.0],
+    [-0.55, 0.38, 0.15, 0.62],
+    [0.5, 0.32, -0.2, 0.48],
   ];
 
   const layers = {};
   for (const def of layerDefs) {
+    const total = def.count * SUBS;
     const mat = lambert(def.color, {
       flatShading: true,
       vertexColors: true,
       transparent: true,
       opacity: def.opacity,
     });
-    const mesh = new THREE.InstancedMesh(geo, mat, def.count);
+    const mesh = new THREE.InstancedMesh(geo, mat, total);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    const base = new Float32Array(def.count * 3);
-    const scale = new Float32Array(def.count * 3);
-    const speed = new Float32Array(def.count);
+    const base = new Float32Array(total * 3);
+    const scale = new Float32Array(total * 3);
+    const speed = new Float32Array(total);
     const ownClusters = lineClusters.filter((c) => c.layer === def.key);
-    for (let i = 0; i < def.count; i++) {
+    for (let p = 0; p < def.count; p++) {
       let x, y, z;
       if (ownClusters.length > 0 && rng.range(0, 1) < 0.6) {
         const c = ownClusters[rng.int(0, ownClusters.length - 1)];
@@ -890,34 +902,44 @@ function buildLayeredClouds(rng) {
         z = rng.range(-1800, 1800);
       }
       const r = rng.range(def.rMin, def.rMax);
-      base[i * 3] = x;
-      base[i * 3 + 1] = y;
-      base[i * 3 + 2] = z;
-      scale[i * 3] = r;
-      scale[i * 3 + 1] = r * def.flat;
-      scale[i * 3 + 2] = r;
-      speed[i] = rng.range(def.driftMin, def.driftMax);
-      dummy.position.set(x, y, z);
-      dummy.scale.set(r, r * def.flat, r);
-      dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      // Jitter each puff's colour a few percent so the layer is not one
-      // flat tint: the warm top / shaded bottom read comes from the
-      // baked vertex gradient (bright cirrus, warm cumulus, warm low).
-      const jitter = rng.range(0.9, 1.08);
-      tmpColor.setHex(def.color).multiplyScalar(jitter);
-      mesh.setColorAt(i, tmpColor);
+      const puffSpeed = rng.range(def.driftMin, def.driftMax);
+      for (let s = 0; s < SUBS; s++) {
+        const i = p * SUBS + s;
+        const sub = SUB_OFF[s];
+        const sr = r * sub[3];
+        const bx = x + sub[0] * r;
+        const by = y + sub[1] * r;
+        const bz = z + sub[2] * r;
+        base[i * 3] = bx;
+        base[i * 3 + 1] = by;
+        base[i * 3 + 2] = bz;
+        scale[i * 3] = sr;
+        scale[i * 3 + 1] = sr * def.flat;
+        scale[i * 3 + 2] = sr;
+        speed[i] = puffSpeed;
+        dummy.position.set(bx, by, bz);
+        dummy.scale.set(sr, sr * def.flat, sr);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        // Jitter each ball's colour a few percent so the layer is not
+        // one flat tint: the warm top / shaded bottom read comes from
+        // the baked vertex gradient (bright cirrus, warm cumulus,
+        // warm low). Caps run a touch brighter than the core.
+        const jitter = rng.range(0.9, 1.08) * (s === 0 ? 1 : 1.05);
+        tmpColor.setHex(def.color).multiplyScalar(jitter);
+        mesh.setColorAt(i, tmpColor);
+      }
     }
     mesh.userData.cloudDrift = { base, scale, speed };
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     layers[def.key] = mesh;
 
-    // Halo shell: the same puffs blown up ~1.5x and much fainter, so
+    // Halo shell: the same balls blown up ~1.5x and much fainter, so
     // each cloud has a dense warm core and a soft transparent edge.
-    const haloScale = new Float32Array(def.count * 3);
-    for (let i = 0; i < def.count; i++) {
+    const haloScale = new Float32Array(total * 3);
+    for (let i = 0; i < total; i++) {
       haloScale[i * 3] = scale[i * 3] * 1.5;
       haloScale[i * 3 + 1] = scale[i * 3 + 1] * 1.5;
       haloScale[i * 3 + 2] = scale[i * 3 + 2] * 1.5;
@@ -928,9 +950,9 @@ function buildLayeredClouds(rng) {
       transparent: true,
       opacity: def.opacity * 0.38,
     });
-    const halo = new THREE.InstancedMesh(geo, haloMat, def.count);
+    const halo = new THREE.InstancedMesh(geo, haloMat, total);
     halo.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    for (let i = 0; i < def.count; i++) {
+    for (let i = 0; i < total; i++) {
       dummy.position.set(base[i * 3], base[i * 3 + 1], base[i * 3 + 2]);
       dummy.scale.set(haloScale[i * 3], haloScale[i * 3 + 1], haloScale[i * 3 + 2]);
       dummy.rotation.set(0, 0, 0);

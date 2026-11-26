@@ -43,6 +43,11 @@ export function makeAircraft() {
   const orangeDark = lambert(PAINT.orangeDark);
   const metal = phong(PAINT.metal, { shininess: 70 });
   const dark = lambert(PAINT.dark);
+  // Propeller blades get their own material (never shared with the
+  // canopy mullions): darker and transparent, so the blades can fade
+  // out with RPM — a fast-spinning prop reads as a blur disc, not as
+  // a solid bar sweeping the frame.
+  const bladeMat = lambert(0x23272e, { transparent: true });
   const glass = phong(PAINT.glass, { shininess: 220, specular: 0xffe9b0, flatShading: true, transparent: true, opacity: 0.88 });
 
   // --- Fuselage: a tapered body, nose cone up front, tail cone at the back.
@@ -207,7 +212,10 @@ export function makeAircraft() {
   propeller.add(spinner);
   const blades = [];
   for (let i = 0; i < 2; i++) {
-    const blade = slab(0.34, 2.9, 0.1, dark);
+    // H5: narrower (0.34 -> 0.22) and thinner (0.1 -> 0.07) so a blade
+    // caught mid-spin never reads as a thick grey pillar or diagonal
+    // bar across the frame.
+    const blade = slab(0.22, 2.9, 0.07, bladeMat);
     blade.position.y = i === 0 ? 1.45 : -1.45;
     // A slight twist so the blades read as an airfoil, not a flat bar.
     blade.rotation.z = i === 0 ? 0.12 : -0.12;
@@ -215,20 +223,23 @@ export function makeAircraft() {
     blades.push(blade);
   }
   // Yellow blade tips, visible while spinning.
+  const tips = [];
   for (const side of [-1, 1]) {
-    const tip = slab(0.36, 0.5, 0.12, lambert(0xffc93c));
+    const tip = slab(0.24, 0.5, 0.09, lambert(0xffc93c));
     tip.position.y = side * 2.7;
     propeller.add(tip);
+    tips.push(tip);
   }
   group.add(propeller);
 
   // Propeller blur disc: a translucent disc in front of the blades that
   // fades in with RPM, so a fast spin reads as smooth motion instead of
-  // flickering blades.
+  // flickering blades. H5: lighter grey (0x3a3f45 -> 0x6b7178) so the
+  // disc reads as haze against a bright sky, not a solid grey bubble.
   const blurDisc = new THREE.Mesh(
     new THREE.CircleGeometry(2.95, 24),
     new THREE.MeshBasicMaterial({
-      color: 0x3a3f45,
+      color: 0x6b7178,
       transparent: true,
       opacity: 0,
       side: THREE.DoubleSide,
@@ -311,6 +322,8 @@ export function makeAircraft() {
     group,
     propeller,
     blades,
+    tips,
+    blurDisc,
     ailerons,
     flaps,
     elevator,
@@ -319,6 +332,17 @@ export function makeAircraft() {
     throttle: 0,
     propAngle: 0,
     navTime: 0,
+    // Cockpit view: the renderer sets this via setCockpit; the prop
+    // is hidden from the pilot's own eye (from a real cockpit a prop
+    // is only a faint peripheral blur, never a pillar in the middle
+    // of the windscreen).
+    cockpit: false,
+
+    // Hide or show the spinning prop parts for the cockpit view.
+    // The spinner hub stays: it is part of the nose the pilot sees.
+    setCockpit(v) {
+      plane.cockpit = !!v;
+    },
 
     // Set the throttle (0..1). The propeller spins faster as it rises.
     setThrottle(v) {
@@ -343,6 +367,17 @@ export function makeAircraft() {
       const targetBlur = 0.02 + plane.throttle * 0.10;
       blurDisc.material.opacity +=
         (targetBlur - blurDisc.material.opacity) * Math.min(1, dt * 4);
+
+      // H5: the prop never shows in the cockpit view — blades, tips
+      // and disc all hidden (the spinner hub stays, it is the nose).
+      // In chase view the blades fade out fast with RPM, so at flying
+      // throttle only the soft disc remains: a solid blade sweeping
+      // the frame read as a grey pillar / diagonal bar in H4.
+      const showProp = !plane.cockpit;
+      blurDisc.visible = showProp;
+      for (const b of blades) b.visible = showProp;
+      for (const t of tips) t.visible = showProp;
+      bladeMat.opacity = Math.max(0.12, 1.15 - plane.throttle * 2.2);
 
       // Ailerons deflect opposite each other with the roll input.
       const roll = input.roll || 0;
