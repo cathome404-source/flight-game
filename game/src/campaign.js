@@ -7,7 +7,7 @@
 // THE SAVE (contract for later sessions — R2-5 refits, medals): one
 // localStorage key holding exactly this shape:
 //   { coins: number, medals: [], refits: {}, best: { <sortieId>: { score, time } },
-//     aircraft: 'cendrawasih' | 'rajawali' | 'komodo' }
+//     aircraft: 'cendrawasih' | 'rajawali' | 'komodo', hull: 100 }
 // medals and refits start empty; later sessions fill them. This module
 // owns coins, best and aircraft (synced from the missions api / hangar);
 // it never touches medals/refits beyond preserving them on every write,
@@ -135,9 +135,9 @@ export const ACTS = [
   { id: 'act3', name: 'Badai', note: 'Badai — malam/senja, tersulit' },
 ];
 
-// One row per sortie: act (0..2), the playable mission id (null for the
-// boss, which has no mission yet), the Indonesian name, the short
-// objective shown in the menu, the coin reward and the target score.
+// One row per sortie: act (0..2), the playable mission id, the
+// Indonesian name, the short objective shown in the menu, the coin
+// reward and the target score.
 export const SORTIES = [
   { n: 1, act: 0, missionId: 'takeoff', name: 'Lepas Landas', objective: 'Naik melewati 100 m.', coins: 100, targetScore: 300 },
   { n: 2, act: 0, missionId: 'rings', name: 'Lingkaran Pertama', objective: '8 ring sesuai urutan.', coins: 120, targetScore: 2200 },
@@ -158,29 +158,6 @@ export function missionIndexForSortie(n) {
   const sortie = SORTIES.find((s) => s.n === n);
   if (!sortie || !sortie.missionId) return -1;
   return MISSIONS.findIndex((m) => m.id === sortie.missionId);
-}
-
-function readCoins() {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(COINS_KEY);
-      const v = raw === null ? 0 : JSON.parse(raw);
-      if (typeof v === 'number' && v >= 0) return v;
-    }
-  } catch (err) {
-    // Storage unavailable or corrupt: start from zero in memory.
-  }
-  return 0;
-}
-
-function writeCoins(value) {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(COINS_KEY, JSON.stringify(value));
-    }
-  } catch (err) {
-    // Storage unavailable: the memory copy still holds the value.
-  }
 }
 
 // The campaign store: coin balance plus a read-through view of the

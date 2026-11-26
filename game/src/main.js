@@ -280,7 +280,6 @@ function liveScore() {
   const s = TUNING.scoring;
   return (
     missions.ringsPassed * s.ringPoints +
-    (missions.stormPassed || 0) * s.ringPoints +
     missions.checkpointsVisited * s.checkpointPoints
   );
 }
@@ -499,6 +498,12 @@ function setView(name) {
 }
 
 function startMission(i) {
+  // Re-apply the save's refits + hull fragility BEFORE missions.start:
+  // start() resets the flight state, and reset() fills the tank to the
+  // CURRENT capacity — applying refits after it left a refitted tank
+  // starting at the old (smaller) capacity instead of full.
+  flight.setRefits(refitLevels(campaign.save.refits, campaign.aircraft));
+  flight.setHull(campaign.hull);
   const ok = missions.start(i);
   if (!ok) {
     hud.showMessage('Finish the previous mission to unlock this one.');
@@ -506,9 +511,6 @@ function startMission(i) {
   }
   runId += 1;
   resetTrace();
-  // Re-apply the save's refits + hull fragility for this sortie.
-  flight.setRefits(refitLevels(campaign.save.refits, campaign.aircraft));
-  flight.setHull(campaign.hull);
   // Most sorties start at golden hour; a sortie may pin its own hour
   // (the night sortie starts at 21:30).
   gameHour = missions.current && missions.current.startHour

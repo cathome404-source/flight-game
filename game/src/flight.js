@@ -283,6 +283,11 @@ export function createFlight(world, aircraft, config) {
       });
       state.fuelCapacity = effFuel.capacity;
       state.fuel = Math.min(state.fuel, effFuel.capacity);
+      // Per-aircraft top speed (incl. engine refit): effects.js and
+      // render.js scale contrails/streaks/FOV against this, not the
+      // global TUNING.flight.maxSpeed (88), so Rajawali (108) and
+      // Komodo (74) get speed effects matched to their own top speed.
+      state.maxSpeed = effFlight.maxSpeed;
     },
 
     // Hull condition 0..100 from the save: a battered hull is more
@@ -384,6 +389,7 @@ export function createFlight(world, aircraft, config) {
       state.throttle = 0;
       state.fuel = effFuel.capacity;
       state.fuelCapacity = effFuel.capacity;
+      state.maxSpeed = effFlight.maxSpeed;
       state.damage = 0;
       state.status = 'onGround';
       state.stalled = false;

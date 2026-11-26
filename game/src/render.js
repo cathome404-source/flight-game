@@ -861,7 +861,7 @@ export function createRenderer(canvas, world) {
       // max speed, plus a fine high-frequency shudder that only wakes
       // above 85% of max speed (small amplitude, ~13 Hz, so the frame
       // trembles instead of jumping around).
-      const maxSpeed = (TUNING.flight && TUNING.flight.maxSpeed) || 88;
+      const maxSpeed = (st.maxSpeed && st.maxSpeed > 0 ? st.maxSpeed : (TUNING.flight && TUNING.flight.maxSpeed) || 88);
       const speedRatio = clamp((st.speed || 0) / maxSpeed, 0, 1);
       const fovTarget = FOV_BASE + (FOV_TOP - FOV_BASE) * speedRatio;
       fovCurrent += (fovTarget - fovCurrent) * (1 - Math.exp(-dt * 2.5));

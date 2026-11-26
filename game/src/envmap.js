@@ -37,8 +37,10 @@ export function createEnvMaps(renderer, scene) {
     if (key === current && currentTarget) return;
     pendingKey = key;
     // Already converted once: re-apply the cached target, no reload.
+    // Never dispose the target being switched away from: it lives in
+    // the cache and is re-applied verbatim on the next revisit, and a
+    // disposed PMREM target renders a dead (black) environment.
     if (cache[key]) {
-      if (currentTarget && currentTarget !== cache[key]) currentTarget.dispose();
       currentTarget = cache[key];
       scene.environment = currentTarget.texture;
       current = key;
@@ -55,7 +57,6 @@ export function createEnvMaps(renderer, scene) {
         // A newer switch may have landed while this one loaded; only
         // apply if this key is still the requested one.
         if (key !== pendingKey) return;
-        if (currentTarget && currentTarget !== target) currentTarget.dispose();
         currentTarget = target;
         scene.environment = target.texture;
         current = key;

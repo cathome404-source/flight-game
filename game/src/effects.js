@@ -183,7 +183,7 @@ export function createEffects(scene, world) {
       dt = Math.min(dt || 0.016, 0.05);
       const st = state || {};
       const pos = st.position || { x: 0, y: 10, z: 0 };
-      const speedRatio = (st.speed || 0) / TUNING.flight.maxSpeed;
+      const speedRatio = (st.speed || 0) / (st.maxSpeed || TUNING.flight.maxSpeed);
       const banking = Math.abs(st.bankDeg || 0);
 
       // --- Clouds drift east; blobs follow their clusters on the sea.
