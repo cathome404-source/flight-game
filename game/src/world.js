@@ -1244,6 +1244,30 @@ function shadowify(group) {
     group.add(ring);
     return ring;
   });
+  // R2 campaign rings, one colour per sortie so the pilot can tell
+  // at a glance which line is theirs: teal for the crosswind strait,
+  // amber for the canyon, white for the time trial, violet for the
+  // intercept gates.
+  const crosswindRings = (WORLD.crosswindRings || []).map((def) => {
+    const ring = makeRing(def, 0x2fb3a0, 0);
+    group.add(ring);
+    return ring;
+  });
+  const canyonRings = (WORLD.canyonRings || []).map((def) => {
+    const ring = makeRing(def, 0xffc93c, 0);
+    group.add(ring);
+    return ring;
+  });
+  const timeTrialRings = (WORLD.timeTrialRings || []).map((def) => {
+    const ring = makeRing(def, 0xf5f2e8, 0);
+    group.add(ring);
+    return ring;
+  });
+  const chaseGates = (WORLD.chaseGates || []).map((def) => {
+    const ring = makeRing(def, 0xb07bff, 0);
+    group.add(ring);
+    return ring;
+  });
   const fuelRings = WORLD.fuelRings.map((def) => {
     const ring = makeFuelRing(def);
     group.add(ring);
@@ -1256,6 +1280,24 @@ function shadowify(group) {
     group.add(cp);
     return cp;
   });
+  // R2: night checkpoints (same light pillars) plus a green marker
+  // pillar over the stranded boat, so the rescue target is findable.
+  const nightCheckpoints = (WORLD.nightCheckpoints || []).map((def) => {
+    const cp = makeCheckpoint(def);
+    group.add(cp);
+    return cp;
+  });
+  let rescueMarker = null;
+  if (WORLD.rescueBoat) {
+    rescueMarker = makeCheckpoint({
+      name: 'Kapal Terdampar',
+      x: WORLD.rescueBoat.x,
+      z: WORLD.rescueBoat.z,
+      y: 40,
+      radius: 30,
+    });
+    group.add(rescueMarker);
+  }
 
   // Layered clouds: cirrus high, cumulus mid, low warm — three
   // InstancedMesh layers plus faint shadow blobs on the sea below.
@@ -1274,7 +1316,13 @@ function shadowify(group) {
     runway,
     rings,
     stormRings,
+    crosswindRings,
+    canyonRings,
+    timeTrialRings,
+    chaseGates,
     checkpoints,
+    nightCheckpoints,
+    rescueMarker,
     fuelRings,
     clouds: [cloudSet.cirrus, cloudSet.cumulus, cloudSet.low],
     cloudLayers: [

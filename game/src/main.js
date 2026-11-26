@@ -5,7 +5,8 @@
 // it that way (pitch +1 = nose up, matching flight.js), so the input is
 // passed to flight.update untouched — no inversion anywhere in this file.
 
-import { MISSIONS, TUNING, WORLD } from './config.js';
+import { TUNING, WORLD } from './config.js';
+import { createCampaign, missionIndexForSortie } from './campaign.js';
 import { createRandom } from './random.js';
 import { createInput } from './input.js';
 import { buildWorld } from './world.js';
@@ -51,6 +52,7 @@ const world = buildWorld(rng);
 const aircraft = makeAircraft();
 const flight = createFlight(world, aircraft);
 const missions = createMissions(flight, world);
+const campaign = createCampaign(missions);
 const hud = createHud(document);
 const audio = createAudio();
 const render = createRenderer(canvas, world);
@@ -69,6 +71,7 @@ const state = {
 window.__flightGame = {
   flight,
   missions,
+  campaign,
   world,
   state,
   render,
@@ -160,9 +163,9 @@ function combinedHudState() {
 // wrapped (not replaced) to add the HUD message, the sound and the shake.
 function wrapEvent(key, extra) {
   const prev = flight.onEvent[key];
-  flight.onEvent[key] = function (info) {
-    if (typeof prev === 'function') prev(info);
-    if (typeof extra === 'function') extra(info);
+  flight.onEvent[key] = function (...args) {
+    if (typeof prev === 'function') prev(...args);
+    if (typeof extra === 'function') extra(...args);
   };
 }
 
@@ -175,6 +178,14 @@ wrapEvent('onStormRing', (i) => {
   audio.ring();
 });
 wrapEvent('onCheckpoint', (i) => {
+  hud.showMessage('Checkpoint reached!  +400');
+  audio.checkpoint();
+});
+wrapEvent('onRingSet', (setName, i) => {
+  hud.showMessage('Ring ' + (i + 1) + '!  +250');
+  audio.ring();
+});
+wrapEvent('onCheckpointSet', (setName, i) => {
   hud.showMessage('Checkpoint reached!  +400');
   audio.checkpoint();
 });
@@ -223,15 +234,23 @@ function crashLines(info) {
 }
 
 // ---- Mission end: banner first, then the end screen with the score.
+missions.onBoatPass = () => {
+  hud.showMessage('Kapal ditemukan! Mendarat di runway.');
+  audio.checkpoint();
+};
+
 missions.onComplete = (info) => {
   audio.success();
   audio.engine(false);
-  hud.showBanner('Mission Complete!', info.mission.name + ' — Score ' + info.score);
+  const coins = campaign.award(info);
+  const coinText = coins > 0 ? '  ·  +' + coins + ' koin' : '';
+  hud.showBanner('Mission Complete!', info.mission.name + ' — Score ' + info.score + coinText);
   setTimeout(() => {
     if (state.screen !== 'playing') return;
     showEnd('Mission Complete', [
       info.mission.name + ' complete!',
-      'Score <b>' + info.score + '</b>' + (info.newBest ? ' — new best!' : ''),
+      'Score <b>' + info.score + '</b>' + (info.newBest ? ' — new best!' : '') +
+        (coins > 0 ? '  ·  <b>+' + coins + ' koin</b> (saldo ' + campaign.coins + ')' : ''),
       'Time ' + formatClock(info.time) + '  ·  Best <b>' + info.best + '</b>',
     ], 'complete');
   }, 1800);
@@ -271,8 +290,11 @@ function startMission(i) {
     hud.showMessage('Finish the previous mission to unlock this one.');
     return false;
   }
-  // Every mission starts at golden hour; the clock runs from there.
-  gameHour = START_HOUR;
+  // Most sorties start at golden hour; a sortie may pin its own hour
+  // (the night sortie starts at 21:30).
+  gameHour = missions.current && missions.current.startHour
+    ? missions.current.startHour
+    : START_HOUR;
   render.setTimeOfDay(gameHour);
   audio.resume();
   audio.engine(true);
@@ -287,7 +309,9 @@ function restartMission() {
   if (!missions.current) return false;
   const ok = missions.restart();
   if (!ok) return false;
-  gameHour = START_HOUR;
+  gameHour = missions.current && missions.current.startHour
+    ? missions.current.startHour
+    : START_HOUR;
   render.setTimeOfDay(gameHour);
   audio.resume();
   audio.engine(true);
@@ -334,26 +358,46 @@ function toggleMute() {
   hud.showMessage(state.muted ? 'Muted' : 'Sound on');
 }
 
-// ---- Menu: one row per mission (locked until the previous is done),
-// with the best score, plus the Free Flight button from index.html.
+// ---- Menu: the campaign — 12 sorties in 3 acts, each row showing its
+// name, short objective, best score/time and lock state, plus the coin
+// balance — with Free Flight still available from index.html.
 function buildMenu() {
   const list = document.getElementById('mission-list');
   if (!list) return;
   list.innerHTML = '';
-  MISSIONS.forEach((def, i) => {
-    const li = document.createElement('li');
-    const unlocked = missions.isUnlocked(i);
-    if (!unlocked) li.className = 'locked';
-    const best = missions.bestScore(def.id);
-    li.innerHTML =
-      '<span class="num">' + (i + 1) + '.</span> ' +
-      def.name + ' — ' + def.objective +
-      (best > 0 ? ' <span class="lock">Best ' + best + '</span>' : '') +
-      (unlocked ? '' : ' <span class="lock">🔒</span>');
-    if (unlocked) {
-      li.addEventListener('click', () => startMission(i));
-    }
-    list.appendChild(li);
+  const coinsEl = document.getElementById('campaign-coins');
+  if (coinsEl) {
+    coinsEl.textContent =
+      '🪙 ' + campaign.coins + ' koin  ·  ' + campaign.completedCount + '/12 sortie selesai';
+  }
+  campaign.acts.forEach((act, actIdx) => {
+    const head = document.createElement('li');
+    head.className = 'act-head';
+    head.textContent = 'Babak ' + (actIdx + 1) + ' — ' + act.name + ' · ' + act.note;
+    list.appendChild(head);
+    campaign.sorties
+      .filter((s) => s.act === actIdx)
+      .forEach((sortie) => {
+        const li = document.createElement('li');
+        const unlocked = campaign.isUnlocked(sortie.n);
+        if (!unlocked) li.className = 'locked';
+        const best = campaign.bestFor(sortie.n);
+        const missionIdx = missionIndexForSortie(sortie.n);
+        const bestText = best.score > 0
+          ? ' <span class="lock">Best ' + best.score +
+            (best.time > 0 ? ' · ' + formatClock(best.time) : '') + '</span>'
+          : '';
+        li.innerHTML =
+          '<span class="num">' + sortie.n + '.</span> ' +
+          sortie.name + ' — ' + sortie.objective +
+          ' <span class="lock">+' + sortie.coins + ' koin</span>' +
+          bestText +
+          (unlocked ? '' : ' <span class="lock">🔒</span>');
+        if (unlocked && missionIdx >= 0) {
+          li.addEventListener('click', () => startMission(missionIdx));
+        }
+        list.appendChild(li);
+      });
   });
   const freeBtn = document.getElementById('btn-free');
   if (freeBtn) {

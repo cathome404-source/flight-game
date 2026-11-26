@@ -146,6 +146,8 @@ export function createFlight(world, aircraft, config) {
     // animated position (1 = fully down, 0 = fully up).
     gearDown: true,
     gearDeploy: 1,
+    // Fuel rings refuel by default; the time trial switches this off.
+    refuelEnabled: true,
   };
 
   // Proximity re-arm flags: a ring only fires again after the plane has
@@ -154,6 +156,17 @@ export function createFlight(world, aircraft, config) {
   const stormArmed = stormDefs.map(() => true);
   const checkpointArmed = checkpointDefs.map(() => true);
   const fuelArmed = fuelRingDefs.map(() => true);
+
+  // R2 campaign sets: extra ring / checkpoint lists from WORLD, each
+  // with its own re-arm flags. The mission module listens through
+  // onRingSet / onCheckpointSet and only counts its own set.
+  const extraSets = [
+    { name: 'crosswindRings', defs: cfgWorld.crosswindRings || [], kind: 'ring' },
+    { name: 'canyonRings', defs: cfgWorld.canyonRings || [], kind: 'ring' },
+    { name: 'timeTrialRings', defs: cfgWorld.timeTrialRings || [], kind: 'ring' },
+    { name: 'chaseGates', defs: cfgWorld.chaseGates || [], kind: 'ring' },
+    { name: 'nightCheckpoints', defs: cfgWorld.nightCheckpoints || [], kind: 'checkpoint' },
+  ].map((set) => ({ ...set, armed: set.defs.map(() => true) }));
 
   let wasStalled = false;
 
@@ -178,11 +191,19 @@ export function createFlight(world, aircraft, config) {
       onRing: null,
       onStormRing: null,
       onCheckpoint: null,
+      onRingSet: null,
+      onCheckpointSet: null,
       onFuelRing: null,
       onTouchdown: null,
       onTerrainHit: null,
       onCrash: null,
       onStall: null,
+    },
+
+    // Time-trial sorties fly with refuelling off: fuel rings give
+    // nothing while this is false. Missions set it per sortie.
+    setRefuelEnabled(on) {
+      state.refuelEnabled = !!on;
     },
 
     setWind(mps) {
@@ -284,6 +305,10 @@ export function createFlight(world, aircraft, config) {
       for (let i = 0; i < stormArmed.length; i++) stormArmed[i] = true;
       for (let i = 0; i < checkpointArmed.length; i++) checkpointArmed[i] = true;
       for (let i = 0; i < fuelArmed.length; i++) fuelArmed[i] = true;
+      for (const set of extraSets) {
+        for (let i = 0; i < set.armed.length; i++) set.armed[i] = true;
+      }
+      state.refuelEnabled = true;
       if (aircraft && aircraft.setThrottle) aircraft.setThrottle(0);
       if (aircraft && aircraft.setGear) aircraft.setGear(1);
       flight.syncAircraft();
@@ -518,6 +543,9 @@ export function createFlight(world, aircraft, config) {
         flight.checkProximity(stormDefs, stormArmed, 'storm');
         flight.checkProximity(checkpointDefs, checkpointArmed, 'checkpoint');
         flight.checkProximity(fuelRingDefs, fuelArmed, 'fuel');
+        for (const set of extraSets) {
+          flight.checkProximity(set.defs, set.armed, set.kind, set.name);
+        }
       }
 
       // --- Keep the visible model in step with the physics. Flaps drop
@@ -537,7 +565,9 @@ export function createFlight(world, aircraft, config) {
     },
 
     // Distance test against one list of ring/checkpoint definitions.
-    checkProximity(defs, armed, kind) {
+    // setName names a campaign set (crosswindRings, canyonRings, ...);
+    // its passes report through onRingSet / onCheckpointSet.
+    checkProximity(defs, armed, kind, setName) {
       const p = state.position;
       for (let i = 0; i < defs.length; i++) {
         const def = defs[i];
@@ -548,18 +578,24 @@ export function createFlight(world, aircraft, config) {
         if (dist < def.radius) {
           if (armed[i]) {
             armed[i] = false;
-            if (kind === 'ring' && flight.onEvent.onRing) {
+            if (kind === 'ring' && setName && flight.onEvent.onRingSet) {
+              flight.onEvent.onRingSet(setName, i);
+            } else if (kind === 'checkpoint' && setName && flight.onEvent.onCheckpointSet) {
+              flight.onEvent.onCheckpointSet(setName, i);
+            } else if (kind === 'ring' && flight.onEvent.onRing) {
               flight.onEvent.onRing(i);
             } else if (kind === 'storm' && flight.onEvent.onStormRing) {
               flight.onEvent.onStormRing(i);
             } else if (kind === 'checkpoint' && flight.onEvent.onCheckpoint) {
               flight.onEvent.onCheckpoint(i);
             } else if (kind === 'fuel') {
-              state.fuel = Math.min(
-                fuelCfg.capacity,
-                state.fuel + fuelCfg.fuelRingBonus
-              );
-              if (flight.onEvent.onFuelRing) flight.onEvent.onFuelRing(i);
+              if (state.refuelEnabled) {
+                state.fuel = Math.min(
+                  fuelCfg.capacity,
+                  state.fuel + fuelCfg.fuelRingBonus
+                );
+                if (flight.onEvent.onFuelRing) flight.onEvent.onFuelRing(i);
+              }
             }
           }
         } else if (dist > def.radius * 2.5) {

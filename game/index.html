@@ -109,6 +109,13 @@
   #mission-list li.locked { opacity: 0.45; cursor: default; }
   #mission-list li .num { color: var(--accent); font-weight: bold; margin-right: 10px; }
   #mission-list li .lock { float: right; color: var(--ink-dim); }
+  #mission-list li.act-head {
+    pointer-events: none; cursor: default;
+    background: none; border: none; padding: 12px 16px 2px;
+    font-size: 15px; font-weight: bold; letter-spacing: 1px;
+    color: var(--accent); text-transform: uppercase;
+  }
+  #campaign-coins { margin-top: 10px; font-size: 18px; font-weight: bold; color: var(--accent); }
   .controls { margin-top: 22px; font-size: 14px; color: var(--ink-dim); line-height: 1.7; }
   .controls b { color: var(--ink); }
   #end-stats { font-size: 20px; margin-top: 8px; line-height: 1.7; }
@@ -147,6 +154,7 @@
 <div id="screen-menu" class="screen on">
   <h1><span class="garuda">GARUDA</span> SKIES</h1>
   <p class="tagline">A low-poly flight game over a tropical archipelago at golden hour.</p>
+  <div id="campaign-coins">🪙 0 koin · 0/12 sortie selesai</div>
   <ul id="mission-list"></ul>
   <button class="btn secondary" id="btn-free">Free Flight</button>
   <div class="controls">

@@ -143,7 +143,7 @@ export const WORLD = {
   rings: [
     { x: 120, z: 330, y: 60, radius: 18 },
     { x: 620, z: -120, y: 80, radius: 18 },
-    { x: 1150, z: -950, y: 150, radius: 18 },
+    { x: 1150, z: -950, y: 230, radius: 18 },
     { x: 350, z: -1250, y: 110, radius: 18 },
     { x: -850, z: -1250, y: 70, radius: 18 },
     { x: -1250, z: -350, y: 60, radius: 18 },
@@ -154,16 +154,70 @@ export const WORLD = {
   stormRings: [
     { x: 300, z: 200, y: 70, radius: 16 },
     { x: 900, z: -400, y: 100, radius: 16 },
-    { x: 1150, z: -950, y: 170, radius: 16 },
+    { x: 1150, z: -950, y: 230, radius: 16 },
     { x: 200, z: -1100, y: 120, radius: 16 },
     { x: -900, z: -900, y: 90, radius: 16 },
     { x: -1250, z: -350, y: 60, radius: 16 },
   ],
+  // R2 campaign ring sets. Crosswind: a strait crossing flown against a
+  // steady sideways push. Canyon: a low line hugging the volcanic
+  // island's slopes — every ring sits ~20 m above the cone, so cutting
+  // a corner clips real terrain. Time trial: a fast 10-ring loop home.
+  crosswindRings: [
+    { x: -1000, z: 500, y: 70, radius: 18 },
+    { x: -600, z: 150, y: 80, radius: 18 },
+    { x: -100, z: -100, y: 70, radius: 18 },
+    { x: 400, z: -300, y: 85, radius: 18 },
+    { x: 800, z: -650, y: 100, radius: 18 },
+    { x: 900, z: -600, y: 110, radius: 18 },
+  ],
+  canyonRings: [
+    { x: 1450, z: -950, y: 95, radius: 16 },
+    { x: 1350, z: -700, y: 88, radius: 16 },
+    { x: 1150, z: -620, y: 84, radius: 16 },
+    { x: 850, z: -750, y: 72, radius: 16 },
+    { x: 820, z: -1000, y: 84, radius: 16 },
+    { x: 1000, z: -1250, y: 82, radius: 16 },
+  ],
+  timeTrialRings: [
+    { x: 120, z: 330, y: 60, radius: 18 },
+    { x: 620, z: -120, y: 80, radius: 18 },
+    { x: 1150, z: -950, y: 230, radius: 18 },
+    { x: 350, z: -1250, y: 110, radius: 18 },
+    { x: -850, z: -1250, y: 70, radius: 18 },
+    { x: -1250, z: -350, y: 60, radius: 18 },
+    { x: -500, z: 650, y: 80, radius: 18 },
+    { x: 950, z: 1150, y: 120, radius: 18 },
+    { x: 300, z: 900, y: 70, radius: 18 },
+    { x: -80, z: 560, y: 45, radius: 18 },
+  ],
+  // Five intercept gates on the line from the runway to Batu Karang —
+  // the fleeing target plane's route. The pilot must clear each gate
+  // before the target reaches the far island (the sortie time limit).
+  chaseGates: [
+    { x: 150, z: 650, y: 70, radius: 18 },
+    { x: 450, z: 850, y: 90, radius: 18 },
+    { x: 650, z: 1000, y: 110, radius: 18 },
+    { x: 850, z: 1120, y: 130, radius: 18 },
+    { x: 950, z: 1150, y: 150, radius: 18 },
+  ],
+  // Stranded boat for the rescue sortie: open sea between Garuda and
+  // Kelapa, so the low pass happens over water, not over land.
+  rescueBoat: { x: -650, z: 250 },
   // Three tour checkpoints, one over each far island.
   checkpoints: [
     { name: 'Merapi Kecil', x: 1150, z: -950, y: 230, radius: 40 },
     { name: 'Kelapa', x: -1250, z: -350, y: 90, radius: 40 },
     { name: 'Batu Karang', x: 950, z: 1150, y: 140, radius: 40 },
+  ],
+  // Four night checkpoints for the night sortie: sea crossings first,
+  // then the volcano, then a low final over the runway approach. At
+  // night the light pillars and runway lights are the guide.
+  nightCheckpoints: [
+    { name: 'Teluk Senja', x: 600, z: 700, y: 110, radius: 40 },
+    { name: 'Laut Kelapa', x: -700, z: -700, y: 130, radius: 40 },
+    { name: 'Merapi Kecil', x: 1150, z: -950, y: 240, radius: 40 },
+    { name: 'Pulang', x: 200, z: 560, y: 60, radius: 40 },
   ],
   // Fuel rings hover over the sea between islands; flying through one refuels.
   fuelRings: [
@@ -221,55 +275,110 @@ export const WORLD = {
   },
 };
 
+// R2 campaign sorties 1–11 (sortie 12, the boss finale, is defined in
+// campaign.js only — its mechanics land in R2-4). Fields: kind drives
+// the mission logic in missions.js; ringSet / checkpointSet name the
+// WORLD list the sortie flies; coins is the campaign reward; targetScore
+// is the score to beat; startHour pins the time of day (night sortie);
+// startFuel starts the tank part-full (rescue); allowRefuel false means
+// fuel rings give nothing (time trial).
 export const MISSIONS = [
   {
-    id: 'takeoff',
-    name: 'Takeoff',
+    id: 'takeoff', kind: 'takeoff',
+    name: 'Lepas Landas',
     short: 'Lepas landas',
-    objective: 'Take off from the runway and climb past 100 m.',
+    objective: 'Lepas landas dari runway dan naik melewati 100 m.',
     targetAltitude: 100,
-    timeLimit: 120,
-    parTime: 45,
-    wind: 0,
+    timeLimit: 120, parTime: 45, wind: 0,
+    coins: 100, targetScore: 300,
   },
   {
-    id: 'rings',
-    name: 'Ring Run',
+    id: 'rings', kind: 'rings', ringSet: 'rings',
+    name: 'Lingkaran Pertama',
     short: 'Terbang melewati ring',
-    objective: 'Fly through all 8 target rings in order.',
+    objective: 'Terbang melewati 8 ring sesuai urutan.',
     ringCount: 8,
-    timeLimit: 300,
-    parTime: 150,
-    wind: 2,
+    timeLimit: 300, parTime: 150, wind: 2,
+    coins: 120, targetScore: 2200,
   },
   {
-    id: 'tour',
-    name: 'Island Tour',
+    id: 'tour', kind: 'tour', checkpointSet: 'checkpoints',
+    name: 'Tur Keliling Pulau',
     short: 'Keliling pulau',
-    objective: 'Visit the 3 checkpoints over Merapi Kecil, Kelapa and Batu Karang.',
+    objective: 'Kunjungi 3 checkpoint di atas Merapi Kecil, Kelapa, dan Batu Karang.',
     checkpointCount: 3,
-    timeLimit: 420,
-    parTime: 240,
-    wind: 4,
+    timeLimit: 420, parTime: 240, wind: 4,
+    coins: 150, targetScore: 1500,
   },
   {
-    id: 'landing',
-    name: 'Precision Landing',
+    id: 'landing', kind: 'landing',
+    name: 'Mendarat Presisi',
     short: 'Mendarat presisi',
-    objective: 'Land gently inside the marked touchdown zone on the runway.',
-    timeLimit: 300,
-    parTime: 120,
-    wind: 3,
+    objective: 'Mendarat dengan lembut di dalam zona touchdown kuning di runway.',
+    timeLimit: 300, parTime: 120, wind: 3,
+    coins: 150, targetScore: 600,
   },
   {
-    id: 'storm',
-    name: 'Storm Run',
-    short: 'Terbang di badai',
-    objective: 'Fly through 6 rings against the clock as the wind picks up.',
+    id: 'crosswind', kind: 'rings', ringSet: 'crosswindRings',
+    name: 'Selat Berangin',
+    short: 'Ring melawan angin samping',
+    objective: 'Terbang melewati 6 ring di selat — angin samping mendorong pesawat ke timur, lawan terus.',
     ringCount: 6,
-    timeLimit: 180,
-    parTime: 110,
-    wind: 12,
+    timeLimit: 300, parTime: 150, wind: 10,
+    coins: 150, targetScore: 1800,
+  },
+  {
+    id: 'chase', kind: 'rings', ringSet: 'chaseGates',
+    name: 'Kejar Bayangan',
+    short: 'Kejar pesawat target',
+    objective: 'Kejar pesawat target melewati 5 gate sebelum ia sampai di pulau jauh.',
+    ringCount: 5,
+    timeLimit: 120, parTime: 60, wind: 4,
+    coins: 200, targetScore: 1600,
+  },
+  {
+    id: 'canyon', kind: 'rings', ringSet: 'canyonRings',
+    name: 'Ngarai Sempit',
+    short: 'Rute rendah di ngarai',
+    objective: 'Terbang rendah di antara punggung gunung Merapi Kecil melewati 6 ring — jangan senggol lereng.',
+    ringCount: 6,
+    timeLimit: 300, parTime: 170, wind: 6,
+    coins: 200, targetScore: 1800,
+  },
+  {
+    id: 'night', kind: 'tour', checkpointSet: 'nightCheckpoints',
+    name: 'Malam di Atas Laut',
+    short: 'Checkpoint di malam hari',
+    objective: 'Kunjungi 4 checkpoint di malam hari — lampu runway dan mercusuar jadi panduan.',
+    checkpointCount: 4,
+    timeLimit: 420, parTime: 260, wind: 3, startHour: 21.5,
+    coins: 250, targetScore: 1900,
+  },
+  {
+    id: 'storm', kind: 'rings', ringSet: 'stormRings',
+    name: 'Badai Datang',
+    short: 'Terbang di badai',
+    objective: 'Terbang melewati 6 ring melawan waktu selagi angin makin kencang.',
+    ringCount: 6,
+    timeLimit: 180, parTime: 110, wind: 12,
+    coins: 250, targetScore: 1800,
+  },
+  {
+    id: 'rescue', kind: 'rescue',
+    name: 'Penyelamatan',
+    short: 'Selamatkan kapal terdampar',
+    objective: 'Lewat pelan di atas kapal terdampar (di bawah 120 kt, di bawah 60 m), lalu mendarat sebelum bahan bakar habis.',
+    timeLimit: 300, parTime: 200, wind: 4, startFuel: 55,
+    coins: 300, targetScore: 1200,
+  },
+  {
+    id: 'timetrial', kind: 'rings', ringSet: 'timeTrialRings',
+    name: 'Ujian Waktu',
+    short: 'Time trial 10 ring',
+    objective: 'Terbang melewati 10 ring secepat mungkin — jam ketat, tanpa isi bahan bakar.',
+    ringCount: 10,
+    timeLimit: 180, parTime: 140, wind: 2, allowRefuel: false,
+    coins: 350, targetScore: 2800,
   },
 ];
 
