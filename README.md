@@ -1,8 +1,8 @@
 # Garuda Skies
 
-[![make.fun](https://img.shields.io/badge/make.fun-bounty-orange)](https://make.fun/bounty/best-flight-game-20261126-0057)
-[![Best Flight Game](https://img.shields.io/badge/bounty-best--flight--game-ff7a3c)](https://make.fun/bounty/best-flight-game-20261126-0057)
-[![Three.js r149](https://img.shields.io/badge/three.js-r149-2e4a7a)](https://make.fun/bounty/best-flight-game-20261126-0057)
+[![make.fun](https://make.fun/badge/best-flight-game-20261126-0057.svg)](https://make.fun/bounty/best-flight-game-20261126-0057)
+[![Rank](https://make.fun/badge/best-flight-game-20261126-0057/cathome404-source/flight-game/rank.svg)](https://make.fun/bounty/best-flight-game-20261126-0057)
+[![Reward](https://make.fun/badge/best-flight-game-20261126-0057/cathome404-source/flight-game/reward.svg)](https://make.fun/bounty/best-flight-game-20261126-0057)
 
 A low-poly 3D flight game set over a tropical island archipelago at golden hour.
 Pilot a small single-propeller plane past beaches, palm trees and volcanic hills,
