@@ -366,6 +366,16 @@ function frame(now) {
   if (input.takePressed('KeyC') && state.screen === 'playing' && !state.posed) {
     setView(state.view === 'cockpit' ? 'chase' : 'cockpit');
   }
+  // Barrel roll: Q rolls left, E rolls right — one full 360-degree roll
+  // while flying. flight.startBarrelRoll guards the rest (flying only,
+  // one roll at a time, enough speed); a press mid-roll is ignored and
+  // shows no message.
+  if (input.takePressed('KeyQ') && state.screen === 'playing' && !state.posed) {
+    if (flight.startBarrelRoll(-1)) hud.showMessage('Barrel Roll!');
+  }
+  if (input.takePressed('KeyE') && state.screen === 'playing' && !state.posed) {
+    if (flight.startBarrelRoll(1)) hud.showMessage('Barrel Roll!');
+  }
 
   // Mouse-look drag feeds the renderer (chase orbit / cockpit glance).
   const look = input.consumeLook();

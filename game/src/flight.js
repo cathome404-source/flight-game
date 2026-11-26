@@ -157,6 +157,13 @@ export function createFlight(world, aircraft, config) {
   let stickPitch = 0;
   let stickRoll = 0;
 
+  // Barrel roll state: one roll at a time, sweeping 360 degrees from the
+  // bank the plane had when the roll started, then settling back to it.
+  let rolling = false;
+  let rollDir = 1; // +1 right (E), -1 left (Q)
+  let rollProgress = 0; // degrees swept so far, 0..360
+  let baseRoll = 0; // state.roll (radians) when the roll started
+
   const flight = {
     state,
 
@@ -186,6 +193,30 @@ export function createFlight(world, aircraft, config) {
       state.fuel = fuelCfg.capacity;
     },
 
+    // Barrel roll trigger: Q rolls left (dir -1), E rolls right (dir +1).
+    // Only while flying, one roll at a time, and only with enough speed
+    // to pay the speed cost without dropping below stall speed.
+    // Returns true when a roll actually starts.
+    startBarrelRoll(dir) {
+      if (state.status !== 'flying' || rolling) return false;
+      if (state.speed <= fly.stallSpeed + fly.barrelRollSpeedCost + 2) {
+        return false;
+      }
+      rolling = true;
+      rollDir = dir >= 0 ? 1 : -1;
+      rollProgress = 0;
+      baseRoll = state.roll;
+      state.speed = Math.max(
+        fly.stallSpeed + 1,
+        state.speed - fly.barrelRollSpeedCost
+      );
+      return true;
+    },
+
+    isRolling() {
+      return rolling;
+    },
+
     addDamage(v) {
       if (state.status === 'crashed') return;
       state.damage = clamp(state.damage + v, 0, dmgCfg.maxDamage);
@@ -199,6 +230,8 @@ export function createFlight(world, aircraft, config) {
       state.status = 'crashed';
       state.speed = 0;
       state.throttle = 0;
+      rolling = false;
+      rollProgress = 0;
       if (aircraft && aircraft.setThrottle) aircraft.setThrottle(0);
       if (flight.onEvent.onCrash) {
         flight.onEvent.onCrash({ reason: reason || 'crash', damage: state.damage });
@@ -227,6 +260,9 @@ export function createFlight(world, aircraft, config) {
       wasStalled = false;
       stickPitch = 0;
       stickRoll = 0;
+      rolling = false;
+      rollProgress = 0;
+      baseRoll = 0;
       for (let i = 0; i < ringArmed.length; i++) ringArmed[i] = true;
       for (let i = 0; i < stormArmed.length; i++) stormArmed[i] = true;
       for (let i = 0; i < checkpointArmed.length; i++) checkpointArmed[i] = true;
@@ -321,18 +357,36 @@ export function createFlight(world, aircraft, config) {
           if (Math.abs(diff) <= pitchLevelRate * dt) state.pitch = gustPitchT;
           else state.pitch += Math.sign(diff) * pitchLevelRate * dt;
         }
-        // --- Roll chases its target exponentially (time constant ~0.22 s)
-        // instead of snapping at full rate: the bank builds up soft and
-        // settles soft — that lag IS the inertia. The old rate cap stays
-        // only as a guard for huge deflections.
-        const targetRoll = stickRoll * fly.maxBank * DEG + gustRollT;
-        const rollRate = fly.rollRate * DEG;
-        const rollStep = (targetRoll - state.roll) * Math.min(1, dt / 0.22);
-        state.roll += clamp(rollStep, -rollRate * dt, rollRate * dt);
+        // --- Barrel roll: while rolling, the roll angle sweeps a full
+        // 360 degrees from the pre-roll bank at the configured rate,
+        // ignoring the stick's bank target and the gusts. Pitch still
+        // answers the stick (handled above); the turn is suppressed so
+        // the heading holds roughly through the roll.
+        if (rolling) {
+          rollProgress += fly.barrelRollRate * dt;
+          if (rollProgress >= 360) {
+            rolling = false;
+            rollProgress = 0;
+            state.roll = baseRoll;
+          } else {
+            state.roll = baseRoll + rollDir * rollProgress * DEG;
+          }
+        } else {
+          // --- Roll chases its target exponentially (time constant ~0.22 s)
+          // instead of snapping at full rate: the bank builds up soft and
+          // settles soft — that lag IS the inertia. The old rate cap stays
+          // only as a guard for huge deflections.
+          const targetRoll = stickRoll * fly.maxBank * DEG + gustRollT;
+          const rollRate = fly.rollRate * DEG;
+          const rollStep = (targetRoll - state.roll) * Math.min(1, dt / 0.22);
+          state.roll += clamp(rollStep, -rollRate * dt, rollRate * dt);
+        }
 
         // --- Turns: bank + speed set the turn rate. Slow + steep bank
         // turns tight, fast + shallow bank turns wide (coordinated turn).
-        if (state.speed > 1) {
+        // Suppressed mid-roll: a bank near 90 degrees would otherwise
+        // whip the heading around (tan of the roll blows up).
+        if (state.speed > 1 && !rolling) {
           const turnRate = (GRAVITY_TURN * Math.tan(state.roll)) / state.speed;
           state.yaw -= turnRate * dt;
         }
@@ -419,6 +473,14 @@ export function createFlight(world, aircraft, config) {
         if (state.position.y <= groundY + 0.6) {
           flight.handleTouchdown(groundY);
         }
+      }
+
+      // --- A touchdown (or terrain hit) ends any roll in progress: the
+      // plane is on the ground now, so the roll must not resume on the
+      // next takeoff from a frozen mid-roll angle.
+      if (rolling && state.status !== 'flying') {
+        rolling = false;
+        rollProgress = 0;
       }
 
       // --- Rings, checkpoints and fuel rings, only while airborne.

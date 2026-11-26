@@ -22,6 +22,11 @@ export const TUNING = {
     rollRate: 95,
     // Steepest bank the controls allow, degrees.
     maxBank: 65,
+    // Barrel roll: full 360-degree roll rate (degrees per second) and
+    // the airspeed it costs (m/s) when triggered. At 240 deg/s a roll
+    // takes 1.5 s.
+    barrelRollRate: 240,
+    barrelRollSpeedCost: 4,
     // Turn rate at full bank and cruise speed, degrees per second.
     turnRate: 26,
     // How strongly the nose drops below stall speed, degrees per second.
