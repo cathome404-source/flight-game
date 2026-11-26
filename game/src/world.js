@@ -621,6 +621,9 @@ function makeRunway(rw) {
   }
 
   // Edge lights: small glowing amber spheres on short posts, both sides.
+  // The bulbs are collected so setNightFactor can brighten and enlarge
+  // them after dark (R4-3) — they carry the runway at night.
+  const edgeBulbs = [];
   const lightGeo = new THREE.SphereGeometry(0.7, 6, 5);
   const lightMat = new THREE.MeshBasicMaterial({ color: 0xffc23c });
   const postGeo = new THREE.CylinderGeometry(0.12, 0.12, 1.2, 4);
@@ -635,8 +638,11 @@ function makeRunway(rw) {
       const bulb = new THREE.Mesh(lightGeo, lightMat);
       bulb.position.set(x, 1.4, side * (rw.width / 2 + 2));
       runway.add(bulb);
+      edgeBulbs.push(bulb);
     }
   }
+  runway.userData.edgeBulbs = edgeBulbs;
+  runway.userData.edgeLightMat = lightMat;
 
   // Threshold bars at both ends of the strip.
   for (const end of [-1, 1]) {
@@ -1283,6 +1289,18 @@ function shadowify(group) {
     cloudBlobs: cloudSet.blobs,
     sea,
     glint,
+    // R4-3: runway edge lights carry the runway at night — brighter
+    // (colour pushed past 1) and bigger as the night factor rises.
+    // MeshBasicMaterial is unlit, so the colour scale reads as glow.
+    setNightFactor(f) {
+      const nf = Math.max(0, Math.min(1, f || 0));
+      const mat = runway.userData.edgeLightMat;
+      if (mat) {
+        mat.color.setHex(0xffc23c).multiplyScalar(1 + nf * 1.6);
+      }
+      const bulbs = runway.userData.edgeBulbs || [];
+      for (const b of bulbs) b.scale.setScalar(1 + nf * 0.9);
+    },
     // The nth target ring (0-based), or undefined past the end.
     ringAt(i) {
       return rings[i];

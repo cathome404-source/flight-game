@@ -28,15 +28,81 @@ function forwardOf(state, out) {
   return out;
 }
 
-// Sun direction from the config azimuth/elevation (low in the west).
-function sunDirection() {
-  const az = (WORLD.sun.azimuth || 262) * DEG;
-  const el = (WORLD.sun.elevation || 14) * DEG;
+// Sun direction from an azimuth/elevation pair (degrees).
+function sunDirection(azimuth, elevation) {
+  const az = (azimuth !== undefined ? azimuth : WORLD.sun.azimuth || 262) * DEG;
+  const el = (elevation !== undefined ? elevation : WORLD.sun.elevation || 14) * DEG;
   return {
     x: Math.cos(el) * Math.sin(az),
     y: Math.sin(el),
     z: Math.cos(el) * Math.cos(az),
   };
+}
+
+// Repaint the sky dome's vertex colours for a horizon/zenith pair
+// (same gradient formula makeSkyDome bakes at load, so a time change
+// repaints the dome instead of rebuilding it).
+function paintSkyDome(dome, horizonHex, zenithHex) {
+  if (!dome) return;
+  const geo = dome.geometry;
+  const horizon = new THREE.Color(horizonHex);
+  const zenith = new THREE.Color(zenithHex);
+  const below = new THREE.Color(0x8a5a3a);
+  const haze = new THREE.Color(0xffd9a8);
+  // At night the warm haze band would glow against a dark sky, so it
+  // fades out with the horizon's own darkness (dark horizon = no haze).
+  const hazeAmt = 0.35 * Math.min(1, (horizon.r + horizon.g + horizon.b) / 1.2);
+  const pos = geo.attributes.position;
+  const colours = geo.attributes.color.array;
+  const tmp = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i) / 3600;
+    if (y >= 0) {
+      tmp.copy(horizon).lerp(zenith, Math.pow(y, 0.6));
+      tmp.lerp(haze, (1 - Math.min(1, y * 8)) * hazeAmt);
+    } else {
+      tmp.copy(horizon).lerp(below, Math.min(1, -y * 3));
+    }
+    colours[i * 3] = tmp.r;
+    colours[i * 3 + 1] = tmp.g;
+    colours[i * 3 + 2] = tmp.b;
+  }
+  geo.attributes.color.needsUpdate = true;
+}
+
+// Stars: a cheap Points shell on the sky dome, invisible by day and
+// faded in at night (opacity driven by the night factor).
+function makeStars() {
+  const count = 420;
+  const pos = new Float32Array(count * 3);
+  // Deterministic LCG so the star field is identical every load.
+  let s = 1234567;
+  const rnd = () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+  for (let i = 0; i < count; i++) {
+    const az = rnd() * Math.PI * 2;
+    const el = Math.asin(rnd() * 0.95 + 0.05);
+    const r = 3400;
+    pos[i * 3] = Math.cos(el) * Math.sin(az) * r;
+    pos[i * 3 + 1] = Math.sin(el) * r;
+    pos[i * 3 + 2] = Math.cos(el) * Math.cos(az) * r;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xdfe8ff,
+    size: 2.2,
+    sizeAttenuation: false,
+    transparent: true,
+    opacity: 0,
+    fog: false,
+    depthWrite: false,
+  });
+  const stars = new THREE.Points(geo, mat);
+  stars.name = 'stars';
+  return stars;
 }
 
 // A soft radial glow texture drawn on a canvas — no image file needed.
@@ -125,7 +191,10 @@ export function createRenderer(canvas, world) {
   // foreground stays sharp — foreground/background depth at a glance.
   const atm = WORLD.atmosphere || {};
   scene.fog = new THREE.Fog(WORLD.sky.horizon, atm.fogNear || 650, atm.fogFar || 2600);
-  scene.add(makeSkyDome());
+  const skyDome = makeSkyDome();
+  scene.add(skyDome);
+  const stars = makeStars();
+  scene.add(stars);
   if (world && world.group) scene.add(world.group);
 
   // --- Golden-hour lighting: low warm sun, sky bounce, soft fill.
@@ -196,18 +265,20 @@ export function createRenderer(canvas, world) {
   blobShadow.renderOrder = 1;
   blobShadowHolder.add(blobShadow);
   scene.add(blobShadowHolder);
-  // Shadow direction (horizontal, away from the sun) and stretch.
-  const sunEl = (WORLD.sun.elevation || 14) * DEG;
-  const sunFlat = sunDirection();
-  const shadowDirLen = Math.hypot(sunFlat.x, sunFlat.z) || 1;
-  const shadowDir = {
+  // Shadow direction (horizontal, away from the sun) and stretch —
+  // recomputed by setTimeOfDay whenever the sun moves, so the blob
+  // shadow stays on the correct side of the plane at every hour.
+  let sunEl = (WORLD.sun.elevation || 14) * DEG;
+  let sunFlat = sunDirection();
+  let shadowDirLen = Math.hypot(sunFlat.x, sunFlat.z) || 1;
+  let shadowDir = {
     x: -sunFlat.x / shadowDirLen,
     z: -sunFlat.z / shadowDirLen,
   };
   // A circle cast by a low sun stretches 1/sin(elevation) along the
   // shadow direction (~5x at 11.5 deg); the offset grows 1/tan(el).
-  const shadowStretch = 1 / Math.max(0.05, Math.sin(sunEl));
-  const shadowTan = Math.max(0.05, Math.tan(sunEl));
+  let shadowStretch = 1 / Math.max(0.05, Math.sin(sunEl));
+  let shadowTan = Math.max(0.05, Math.tan(sunEl));
   blobShadowHolder.rotation.y = -Math.atan2(shadowDir.z, shadowDir.x);
 
   // --- Lens glow: one bright sprite at the sun plus two faint ghosts.
@@ -381,12 +452,120 @@ export function createRenderer(canvas, world) {
     shakeAmp = Math.min(1.4, shakeAmp + amount);
   }
 
+  // --- Day-night cycle (R4-3): a game clock drives the time of day.
+  // setTimeOfDay(hours) interpolates between the config keyframes
+  // and applies the result to the sun, sky dome, fog, lights, glow,
+  // disc, stars and runway lights. The golden-hour keyframe (17.5)
+  // reproduces today's fixed look exactly.
+  let timeOfDay = (WORLD.dayNight && WORLD.dayNight.startHour) || 17.5;
+  let nightFactor = 0;
+  function lerpHex(a, b, t) {
+    // Fresh Color per call: the three interpolated colours are all
+    // live at once below, so they must not share one scratch object.
+    return new THREE.Color(a).lerp(new THREE.Color(b), t);
+  }
+  function setTimeOfDay(hours) {
+    const dn = WORLD.dayNight;
+    if (!dn || !dn.keyframes || !dn.keyframes.length) return;
+    const h = (((hours % 24) + 24) % 24);
+    timeOfDay = h;
+    const kfs = dn.keyframes;
+    let a = kfs[kfs.length - 1];
+    let b = kfs[0];
+    let span = (b.hour + 24) - a.hour;
+    let t = (h + 24 - a.hour) / span;
+    for (let i = 0; i < kfs.length; i++) {
+      const cur = kfs[i];
+      const nxt = kfs[(i + 1) % kfs.length];
+      const end = nxt.hour > cur.hour ? nxt.hour : nxt.hour + 24;
+      const start = cur.hour;
+      const hh = h < start && i === kfs.length - 1 ? h + 24 : h;
+      if (hh >= start && hh < end) {
+        a = cur;
+        b = nxt;
+        span = end - start;
+        t = (hh - start) / span;
+        break;
+      }
+    }
+    t = clamp(t, 0, 1);
+    const num = (key) => a[key] + (b[key] - a[key]) * t;
+    const az = num('azimuth');
+    const el = num('elevation');
+    const horizon = lerpHex(a.horizon, b.horizon, t);
+    const zenith = lerpHex(a.zenith, b.zenith, t);
+    const sunCol = lerpHex(a.sun, b.sun, t);
+    nightFactor = num('night');
+
+    const dir = sunDirection(az, el);
+    sun.position.set(dir.x * 900, dir.y * 900, dir.z * 900);
+    sun.color.copy(sunCol);
+    sun.intensity = num('sunIntensity');
+    hemi.color.copy(zenith);
+    hemi.groundColor.copy(lerpHex(0xe8cf9a, 0x1a2436, nightFactor));
+    hemi.intensity = num('hemi');
+    ambient.color.copy(lerpHex(0xffe0b3, 0x8fb0ff, nightFactor));
+    ambient.intensity = num('ambient');
+    scene.fog.color.copy(horizon);
+    paintSkyDome(skyDome, horizon.getHex(), zenith.getHex());
+    if ('toneMappingExposure' in renderer) {
+      renderer.toneMappingExposure = num('exposure');
+    }
+    // Sun glow + disc follow the sun; at night they become a pale
+    // moon (small disc, faint cool glow) instead of vanishing.
+    sunGlow.position.set(dir.x * 3200, dir.y * 3200, dir.z * 3200);
+    glowMat.opacity = num('glow');
+    glowMat.color.copy(sunCol);
+    sunDisc.position.set(dir.x * 3300, dir.y * 3300, dir.z * 3300);
+    sunDisc.lookAt(0, 0, 0);
+    sunDisc.material.color.copy(lerpHex(0xfff3c4, 0xe8efff, nightFactor));
+    sunDisc.scale.setScalar(1 - nightFactor * 0.45);
+    for (let i = 0; i < ghosts.length; i++) {
+      const g = ghosts[i];
+      g.position.set(
+        dir.x * 3200 + (i === 0 ? 260 : -420),
+        dir.y * 3200 + (i === 0 ? -120 : 180),
+        dir.z * 3200
+      );
+      g.material.opacity = (0.28 - i * 0.1) * (1 - nightFactor * 0.85);
+    }
+    stars.material.opacity = nightFactor * 0.9;
+    // Blob-shadow geometry follows the new sun elevation/azimuth.
+    sunEl = el * DEG;
+    sunFlat = dir;
+    shadowDirLen = Math.hypot(dir.x, dir.z) || 1;
+    shadowDir = { x: -dir.x / shadowDirLen, z: -dir.z / shadowDirLen };
+    shadowStretch = 1 / Math.max(0.05, Math.sin(sunEl));
+    shadowTan = Math.max(0.05, Math.tan(sunEl));
+    // The sun-glint path on the sea fades out as night falls — and
+    // as the sun climbs: a glint path only exists for a low sun, so
+    // at midday (el 68) the additive streak nearly vanishes instead
+    // of washing the near sea white.
+    if (world && world.glint && world.glint.material) {
+      const glintSun = Math.max(0.08, 1 - el / 75);
+      world.glint.material.opacity =
+        0.26 * (1 - nightFactor * 0.9) * glintSun;
+    }
+    if (world && typeof world.setNightFactor === 'function') {
+      world.setNightFactor(nightFactor);
+    }
+  }
+
   const api = {
     scene,
     camera,
     chaseCamera,
     cockpitCamera,
     effects,
+    // Day-night cycle: pin or read the game clock (hours, 0..24)
+    // and how night it is (0 = day, 1 = full night).
+    setTimeOfDay,
+    getTimeOfDay() {
+      return timeOfDay;
+    },
+    getNightFactor() {
+      return nightFactor;
+    },
 
     // Attach the aircraft so the contrails can read its wingtips.
     setAircraft(ac) {
@@ -491,12 +670,16 @@ export function createRenderer(canvas, world) {
         if (seaShader) seaShader.uniforms.uTime.value = t;
       }
 
-      // Landing light: bright low over the runway, a dim glow elsewhere.
+      // Landing light: bright low over the runway, a dim glow
+      // elsewhere — and at night it matters everywhere, so the base
+      // and runway intensities both rise with the night factor.
       const rdx = pos.x - WORLD.runway.x;
       const rdz = pos.z - WORLD.runway.z;
       const runwayDist = Math.sqrt(rdx * rdx + rdz * rdz);
       const nearRunway = runwayDist < 700 && (st.altitude || 0) < 130;
-      const targetIntensity = nearRunway ? 1.7 : 0.22;
+      const targetIntensity = nearRunway
+        ? 1.7 + nightFactor * 1.8
+        : 0.22 + nightFactor * 0.55;
       landingLight.intensity += (targetIntensity - landingLight.intensity) * Math.min(1, dt * 3);
       forwardOf(st, tmpForward);
       landingLight.position
@@ -510,8 +693,19 @@ export function createRenderer(canvas, world) {
       landingLight.target.updateMatrixWorld();
 
       // Sun glow breathes almost imperceptibly with the light.
-      const pulse = 1 + Math.sin((st.time || 0) * 0.4) * 0.02;
+      const pulse = 1 + Math.sin(ambientTime * 0.4) * 0.02;
       sunGlow.scale.set(1100 * pulse, 1100 * pulse, 1);
+
+      // Night nav lights: aircraft.update() resets the bulb scale
+      // every frame (blink), so the boost is applied here, after it,
+      // and is re-applied fresh each frame — brighter and bigger so
+      // the plane still reads against a dark sky.
+      if (aircraft && aircraft.navLights && nightFactor > 0.01) {
+        const boost = 1 + nightFactor * 0.9;
+        for (const key of Object.keys(aircraft.navLights)) {
+          aircraft.navLights[key].scale.multiplyScalar(boost);
+        }
+      }
 
       // Aim both virtual cameras, then glide the real camera toward the
       // active one: position lerp + quaternion slerp, frame-rate safe.
@@ -593,5 +787,8 @@ export function createRenderer(canvas, world) {
       post.render(scene, camera, dt);
     },
   };
+  // Start at golden hour (today's look) until main.js advances the
+  // clock or a shot pins a different hour.
+  setTimeOfDay(timeOfDay);
   return api;
 }

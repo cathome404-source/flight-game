@@ -181,6 +181,27 @@ export const WORLD = {
     zenith: 0x2e4a7a,
     sun: 0xffd27a,
   },
+  // Day-night cycle (R4-3): a game clock drives the time of day.
+  // A full cycle takes cycleMinutes of play (10 min default, so the
+  // player sees the mood change inside one mission). The menu and
+  // the screenshot poses start at startHour (golden hour, today's
+  // look). Each keyframe is one stop: sun azimuth/elevation, sky
+  // colours, light levels, exposure, glow strength and night 0..1
+  // (1 = full night: runway/nav lights carry the scene). Night
+  // keyframes reuse the sun light as dim blue moonlight.
+  dayNight: {
+    cycleMinutes: 10,
+    startHour: 17.5,
+    keyframes: [
+      { hour: 0, azimuth: 150, elevation: 40, horizon: 0x0b1830, zenith: 0x03070f, sun: 0x9db8ff, sunIntensity: 0.30, hemi: 0.20, ambient: 0.20, exposure: 0.95, glow: 0.12, night: 1 },
+      { hour: 3, azimuth: 170, elevation: 45, horizon: 0x0b1830, zenith: 0x03070f, sun: 0x9db8ff, sunIntensity: 0.30, hemi: 0.20, ambient: 0.20, exposure: 0.95, glow: 0.12, night: 1 },
+      { hour: 6, azimuth: 100, elevation: 25, horizon: 0xbcd9ea, zenith: 0x5f9bd5, sun: 0xffe9b0, sunIntensity: 1.5, hemi: 0.7, ambient: 0.28, exposure: 1.0, glow: 0.7, night: 0 },
+      { hour: 12, azimuth: 180, elevation: 68, horizon: 0xa8d4f0, zenith: 0x2a6fc0, sun: 0xfff2cc, sunIntensity: 1.4, hemi: 0.65, ambient: 0.25, exposure: 0.9, glow: 0.5, night: 0 },
+      { hour: 17.5, azimuth: 262, elevation: 10.5, horizon: 0xffb36b, zenith: 0x2e4a7a, sun: 0xffd27a, sunIntensity: 1.9, hemi: 0.72, ambient: 0.22, exposure: 1.05, glow: 1.0, night: 0 },
+      { hour: 19, azimuth: 272, elevation: 3, horizon: 0xff7a3c, zenith: 0x352a5e, sun: 0xff8a3c, sunIntensity: 1.1, hemi: 0.5, ambient: 0.18, exposure: 1.0, glow: 0.9, night: 0.25 },
+      { hour: 21, azimuth: 120, elevation: 30, horizon: 0x0e1e38, zenith: 0x040814, sun: 0x9db8ff, sunIntensity: 0.32, hemi: 0.22, ambient: 0.20, exposure: 0.95, glow: 0.15, night: 1 },
+    ],
+  },
   // Terrain relief (H1): how deep the valleys cut into each island's
   // cone, where the rim cliffs start, and how far the haze reaches.
   terrain: {

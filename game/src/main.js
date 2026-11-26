@@ -5,7 +5,7 @@
 // it that way (pitch +1 = nose up, matching flight.js), so the input is
 // passed to flight.update untouched — no inversion anywhere in this file.
 
-import { MISSIONS, TUNING } from './config.js';
+import { MISSIONS, TUNING, WORLD } from './config.js';
 import { createRandom } from './random.js';
 import { createInput } from './input.js';
 import { buildWorld } from './world.js';
@@ -76,7 +76,29 @@ window.__flightGame = {
   hud,
   audio,
   effects: render.effects,
+  // Day-night clock (hours, 0..24) — headless tests drive it here.
+  get gameHour() {
+    return gameHour;
+  },
+  set gameHour(h) {
+    gameHour = ((h % 24) + 24) % 24;
+    render.setTimeOfDay(gameHour);
+  },
 };
+
+// ---- Day-night clock (R4-3): starts at golden hour (the menu look),
+// advances with play time — one full cycle per cycleMinutes — and is
+// pinned by screenshot poses (shots.js) instead of advancing.
+const dayNightCfg = (WORLD.dayNight || {});
+const CYCLE_MINUTES = dayNightCfg.cycleMinutes || 10;
+const START_HOUR = dayNightCfg.startHour || 17.5;
+let gameHour = START_HOUR;
+
+function formatGameHour(h) {
+  const hh = Math.floor(((h % 24) + 24) % 24);
+  const mm = Math.floor((((h % 24) + 24) % 24 - hh) * 60);
+  return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+}
 
 // ---- Live score for the HUD: missions.score is only finalised on
 // completion, so the running total is rebuilt from what was collected.
@@ -126,6 +148,11 @@ function combinedHudState() {
     bankDeg: fs.bankDeg,
     gearDown: fs.gearDown,
     gearDeploy: fs.gearDeploy,
+    // The HUD clock shows the renderer's hour, not the advancing
+    // gameHour: a pinned shot (golden hour by default, or ?time=)
+    // sets the renderer directly, and the clock must match the sky
+    // the player actually sees.
+    clock: formatGameHour(render.getTimeOfDay()),
   };
 }
 
@@ -244,6 +271,9 @@ function startMission(i) {
     hud.showMessage('Finish the previous mission to unlock this one.');
     return false;
   }
+  // Every mission starts at golden hour; the clock runs from there.
+  gameHour = START_HOUR;
+  render.setTimeOfDay(gameHour);
   audio.resume();
   audio.engine(true);
   setView('chase');
@@ -257,6 +287,8 @@ function restartMission() {
   if (!missions.current) return false;
   const ok = missions.restart();
   if (!ok) return false;
+  gameHour = START_HOUR;
+  render.setTimeOfDay(gameHour);
   audio.resume();
   audio.engine(true);
   setView('chase');
@@ -269,6 +301,8 @@ function restartMission() {
 function toMenu() {
   state.screen = 'menu';
   state.posed = false;
+  gameHour = START_HOUR;
+  render.setTimeOfDay(gameHour);
   audio.engine(false);
   audio.setSpeed(0);
   audio.setWind(0);
@@ -399,8 +433,15 @@ function frame(now) {
     // the same sign flight.js expects — passed through untouched.
     flight.update(dt, input);
     missions.update(dt);
+    // Day-night clock: advances with play time only (frozen while
+    // paused, posed or on the menu). A full 24 h cycle takes
+    // CYCLE_MINUTES of play, so the mood visibly changes in a mission.
+    gameHour = (gameHour + (dt * 24) / (CYCLE_MINUTES * 60)) % 24;
+    render.setTimeOfDay(gameHour);
   } else if (state.screen === 'playing' && state.posed) {
     // Posed for a screenshot: propeller spins, plane never moves.
+    // Keep the clock in sync with the pinned render hour.
+    gameHour = render.getTimeOfDay();
     aircraft.setThrottle(flight.state.throttle);
     aircraft.update(dt, { roll: 0, pitch: 0 });
   } else if (state.screen === 'menu') {

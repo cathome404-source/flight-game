@@ -261,6 +261,22 @@ export function createHud(document) {
     targetLine.style.fontWeight = 'bold';
   }
 
+  // ---- Day-night clock (R4-3): small "Time of day" panel next to
+  // the mission timer, so the game hour is always visible. The HUD
+  // panels are dark glass with light text, so it stays legible at
+  // every hour, day or night.
+  let clockValue = null;
+  if (doc.createElement && el.timerScore) {
+    const clockPanel = mk('div', 'panel', el.timerScore);
+    clockPanel.id = 'hud-clock-panel';
+    const lab = mk('div', 'label', clockPanel);
+    lab.textContent = 'Time of day';
+    const val = mk('div', 'value', clockPanel);
+    clockValue = mk('span', '', val);
+    clockValue.id = 'hud-clock';
+    clockValue.textContent = '17:30';
+  }
+
   // ---- Damage readout (hidden while the plane is undamaged) ----
   let damagePanel = null;
   let damageValue = null;
@@ -536,6 +552,9 @@ export function createHud(document) {
     setClass(el.timerScore, 'hud-faded', hudFaded);
 
     writeText(el.timer, 'timer', formatClock(state.time || 0));
+    if (state.clock !== undefined) {
+      writeText(clockValue, 'clock', state.clock);
+    }
     writeText(
       el.score,
       'score',

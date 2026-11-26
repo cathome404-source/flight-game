@@ -24,6 +24,11 @@ function readQuery() {
 
 export function createShots(render, flight, world, missions) {
   let current = null;
+  // R4-3: shots pin the time of day — golden hour by default (today's
+  // look), or the ?time= URL parameter (hours, e.g. ?time=18.5) when
+  // given. Set from the query string below, before any shot applies.
+  let shotHour =
+    (WORLD.dayNight && WORLD.dayNight.startHour) || 17.5;
 
   // Put the plane at one posed spot: eastbound (yaw -90) along the
   // runway line z = 330, flying, with the throttle already set.
@@ -106,6 +111,13 @@ export function createShots(render, flight, world, missions) {
     // the posed view so the very next frame already shows the shot.
     if (render && typeof render.snap === 'function') render.snap();
 
+    // Pin the time of day for the shot (golden hour unless ?time=
+    // was given): posed shots freeze physics, so the clock never
+    // advances them away from the pinned hour.
+    if (render && typeof render.setTimeOfDay === 'function') {
+      render.setTimeOfDay(shotHour);
+    }
+
     current = name;
     return true;
   }
@@ -113,6 +125,14 @@ export function createShots(render, flight, world, missions) {
   // Apply the ?shot= preset from the URL at load, if one was given.
   const query = readQuery();
   const wanted = query.get('shot');
+  // ?time= pins the shot's hour (e.g. ?shot=landing&time=18.5);
+  // without it the shot stays at golden hour.
+  const timeRaw = query.get('time');
+  const timeParsed =
+    timeRaw !== null && timeRaw !== '' ? parseFloat(timeRaw) : NaN;
+  if (Number.isFinite(timeParsed)) {
+    shotHour = ((timeParsed % 24) + 24) % 24;
+  }
   let shotName = null;
   if (wanted && SHOT_NAMES.indexOf(wanted) !== -1) {
     if (applyShot(wanted)) shotName = wanted;
@@ -124,6 +144,7 @@ export function createShots(render, flight, world, missions) {
     SHOT_NAMES,
     applyShot,
     shotName,
+    shotHour,
     seed: Number.isFinite(seed) ? seed : null,
     current() {
       return current;
