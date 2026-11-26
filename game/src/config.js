@@ -111,8 +111,11 @@ export const WORLD = {
   ],
   runway: {
     // Centred on the south shore of Garuda island, pointing east-west.
+    // z = 560 puts the strip on the beach rim: the island cone is under
+    // 2 m high there, so the asphalt sits on the sand instead of being
+    // buried inside the grass cone (which covers z = 330).
     x: -80,
-    z: 330,
+    z: 560,
     heading: 90,
     length: 420,
     width: 26,

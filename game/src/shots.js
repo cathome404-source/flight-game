@@ -1,0 +1,123 @@
+// Garuda Skies — screenshot camera presets (?shot=cover|cockpit|rings|landing).
+// Written fresh from the prose spec. Each preset poses the plane in the
+// air (or on approach) in front of what the shot is about, starts the
+// matching mission so the HUD shows a real objective, and picks the
+// matching camera. The seed in the URL is read here too and reported back;
+// main.js owns the RNG itself, from the same query string.
+
+import { WORLD } from './config.js';
+
+const DEG = Math.PI / 180;
+
+export const SHOT_NAMES = ['cover', 'cockpit', 'rings', 'landing'];
+
+function readQuery() {
+  try {
+    if (typeof window !== 'undefined' && window.location) {
+      return new URLSearchParams(window.location.search || '');
+    }
+  } catch (err) {
+    // No window (headless test): no preset from the URL.
+  }
+  return new URLSearchParams('');
+}
+
+export function createShots(render, flight, world, missions) {
+  let current = null;
+
+  // Put the plane at one posed spot: eastbound (yaw -90) along the
+  // runway line z = 330, flying, with the throttle already set.
+  function pose(x, y, z, yawDeg, pitchDeg, speed, throttle) {
+    const st = flight.state;
+    st.position.set(x, y, z);
+    st.yaw = yawDeg * DEG;
+    st.pitch = pitchDeg * DEG;
+    st.roll = 0;
+    st.speed = speed;
+    st.throttle = throttle;
+    st.fuel = 100;
+    st.damage = 0;
+    st.status = 'flying';
+    st.stalled = false;
+    st.gliding = false;
+    st.verticalSpeed = speed * Math.sin(pitchDeg * DEG);
+    st.altitude = y;
+    st.heading = 90;
+    st.bankDeg = 0;
+    st.pitchDeg = pitchDeg;
+    if (flight.syncAircraft) flight.syncAircraft();
+  }
+
+  // Start a mission for the shot's HUD. Screenshot staging unlocks all
+  // missions in memory only (no completion happens in posed mode, so
+  // nothing is ever written to storage from here).
+  function startForShot(index, freeFallback) {
+    if (!missions || typeof missions.start !== 'function') return false;
+    if (typeof missions.unlocked === 'number') {
+      missions.unlocked = Math.max(missions.unlocked, 4);
+    }
+    if (index >= 0 && missions.start(index)) return true;
+    return missions.start(freeFallback || 'free');
+  }
+
+  function applyShot(name) {
+    if (SHOT_NAMES.indexOf(name) === -1) return false;
+    const rw = WORLD.runway;
+    // Rings fly the z = 330 line; the runway sits on the south beach
+    // at rw.z, so the landing shot uses the runway line instead.
+    const ringZ = WORLD.rings[0].z;
+
+    if (name === 'cover') {
+      // Chase view over the sea west of Garuda: the first ring dead
+      // ahead, the runway strip ahead-right on the south beach.
+      startForShot(1, 'free');
+      pose(-650, 120, ringZ, -90, 0, 55, 0.7);
+      render.setView('chase');
+    } else if (name === 'cockpit') {
+      // Cockpit view on the same approach, lower, instruments lit.
+      startForShot(1, 'free');
+      pose(-350, 85, ringZ, -90, 0, 55, 0.65);
+      render.setView('cockpit');
+    } else if (name === 'rings') {
+      // Just short of the first ring (120, 60, 330): the orange ring
+      // fills the view ahead, the plane about to fly through it.
+      startForShot(1, 'free');
+      pose(-60, 60, ringZ, -90, 0, 55, 0.75);
+      render.setView('chase');
+    } else if (name === 'landing') {
+      // Final approach from the west, nose slightly down, throttle
+      // back: the lit runway and the yellow touchdown zone ahead.
+      // Close enough (340 m out) that the asphalt strip reads clearly.
+      startForShot(3, 'free');
+      pose(-560, 38, rw.z, -90, -3, 46, 0.35);
+      render.setView('chase');
+    }
+
+    // Teleporting the plane leaves the camera far behind: snap it to
+    // the posed view so the very next frame already shows the shot.
+    if (render && typeof render.snap === 'function') render.snap();
+
+    current = name;
+    return true;
+  }
+
+  // Apply the ?shot= preset from the URL at load, if one was given.
+  const query = readQuery();
+  const wanted = query.get('shot');
+  let shotName = null;
+  if (wanted && SHOT_NAMES.indexOf(wanted) !== -1) {
+    if (applyShot(wanted)) shotName = wanted;
+  }
+  const seedRaw = query.get('seed');
+  const seed = seedRaw !== null && seedRaw !== '' ? parseInt(seedRaw, 10) : null;
+
+  return {
+    SHOT_NAMES,
+    applyShot,
+    shotName,
+    seed: Number.isFinite(seed) ? seed : null,
+    current() {
+      return current;
+    },
+  };
+}

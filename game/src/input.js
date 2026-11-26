@@ -3,7 +3,8 @@
 // purely about flying — pitch, roll, throttle, camera, pause, restart, mute.
 //
 // Keys:
-//   ArrowUp / W  pitch down (nose down), ArrowDown / S pitch up — see axes()
+//   ArrowUp / W  pitch up (nose up), ArrowDown / S pitch down — arcade
+//   convention, matching flight.js where +1 pitch means nose up.
 //   ArrowLeft / A roll left, ArrowRight / D roll right
 //   W / Shift throttle up, S / Ctrl throttle down
 //   C toggle camera, R restart mission, P / Escape pause, M mute
@@ -91,8 +92,8 @@ export function createInput(target) {
       let pitch = 0;
       let roll = 0;
       let throttle = 0;
-      if (keys.has('ArrowUp') || keys.has('KeyW')) pitch -= 1;
-      if (keys.has('ArrowDown') || keys.has('KeyS')) pitch += 1;
+      if (keys.has('ArrowUp') || keys.has('KeyW')) pitch += 1;
+      if (keys.has('ArrowDown') || keys.has('KeyS')) pitch -= 1;
       if (keys.has('ArrowLeft') || keys.has('KeyA')) roll -= 1;
       if (keys.has('ArrowRight') || keys.has('KeyD')) roll += 1;
       // Throttle shares W/S with pitch, Shift/Ctrl are the dedicated keys.

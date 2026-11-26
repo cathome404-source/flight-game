@@ -34,8 +34,14 @@
   .panel .label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--ink-dim); }
   .panel .value { font-size: 26px; font-weight: bold; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .panel .unit { font-size: 12px; color: var(--ink-dim); }
-  #hud-left { top: 14px; left: 14px; display: flex; gap: 10px; }
-  #hud-right { top: 14px; right: 14px; display: flex; gap: 10px; }
+  #hud-left { top: 14px; left: 14px; display: flex; gap: 10px; position: absolute; }
+  #hud-right { top: 14px; right: 14px; display: flex; gap: 10px; position: absolute; }
+  /* The panels inside these flex rows must be in-flow flex items:
+     .panel is position:absolute by default, and absolutely-positioned
+     flex children all pile up at the same static position. */
+  #hud-left .panel, #hud-right .panel, #hud-timer-score .panel { position: static; }
+  #hud-timer-score { bottom: 14px; left: 14px; display: flex; gap: 10px; position: absolute; }
+  #hud-message, #hud-stall { position: absolute; }
   #hud-fuel-wrap { width: 170px; }
   #hud-fuel-bar { height: 10px; border-radius: 5px; background: rgba(255,255,255,0.18); overflow: hidden; margin-top: 4px; }
   #hud-fuel-fill { height: 100%; width: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-deep)); }
