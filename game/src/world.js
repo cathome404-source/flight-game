@@ -10,11 +10,11 @@ import { terrainHeightAt } from './flight.js';
 // Warm golden-hour palette for the whole archipelago.
 const PALETTE = {
   sea: 0x1e6f7d,
-  seaShallow: 0x2fb3a0,
+  seaShallow: 0x26a48d,
   seaDeep: 0x0d4258,
   seaFoam: 0xfdf6dd,
-  sand: 0xe8cf9a,
-  sandWet: 0xd9b47c,
+  sand: 0xf2d79e,
+  sandWet: 0xcf9f66,
   grass: 0x4e9440,
   grassDry: 0x8aa84f,
   grassDeep: 0x3f8434,
@@ -119,12 +119,14 @@ function islandHeightAt(def, lx, lz) {
 // any steep slope (cliffs), with a few percent of noise jitter so the
 // surface is not one flat tint.
 const _cSand = new THREE.Color(PALETTE.sand);
+const _cGrass = new THREE.Color(PALETTE.grass);
+const _cGrassDry = new THREE.Color(PALETTE.grassDry);
 const _cGrassLight = new THREE.Color(PALETTE.grassLight);
 const _cGrassDeep = new THREE.Color(PALETTE.grassDeep);
 const _cRock = new THREE.Color(PALETTE.rock);
 const _cVolcano = new THREE.Color(PALETTE.volcano);
 
-function terrainVertexColor(def, h, slope, jitter, out) {
+function terrainVertexColor(def, h, slope, jitter, patch, out) {
   const high = 0.62 * def.height;
   const peak = 0.85 * def.height;
   if (h < 2.5) {
@@ -133,6 +135,17 @@ function terrainVertexColor(def, h, slope, jitter, out) {
     out.copy(_cSand).lerp(_cGrassLight, smooth01((h - 2.5) / 4.5));
   } else if (h < high) {
     out.copy(_cGrassLight).lerp(_cGrassDeep, smooth01((h - 7) / Math.max(1, high - 7)));
+    // R2-12e: patch variation — the old grass band was one flat
+    // green because only height and a +-6% jitter drove the colour.
+    // A low-frequency patch field (~55-220 m) now splits the slopes
+    // into dry yellow-green meadows and lush mid-green groves, so
+    // the islands read as varied tropical grass from the air.
+    // Kept inside the grass band only: sand, rock and volcano keep
+    // their height-driven colours.
+    const dry = smooth01((0.40 - patch) / 0.22);
+    const lush = smooth01((patch - 0.62) / 0.22);
+    out.lerp(_cGrassDry, dry * 0.55);
+    out.lerp(_cGrass, lush * 0.5);
   } else if (h < peak) {
     out.copy(_cGrassDeep).lerp(_cRock, smooth01((h - high) / Math.max(1, peak - high)));
   } else {
@@ -142,8 +155,9 @@ function terrainVertexColor(def, h, slope, jitter, out) {
   if (slope > 0.55) {
     out.lerp(_cRock, smooth01((slope - 0.55) / 0.45) * 0.8);
   }
-  // Jitter lightness a few percent so facets vary.
-  out.multiplyScalar(1 + (jitter - 0.5) * 0.12);
+  // Jitter lightness so facets vary (R2-12e: 0.12 -> 0.16, a touch
+  // more relief in the facets now that patches carry the big shapes).
+  out.multiplyScalar(1 + (jitter - 0.5) * 0.16);
   return out;
 }
 
@@ -170,7 +184,11 @@ function makeReliefTerrain(def) {
     const sz = (islandHeightAt(def, lx, lz + e) - islandHeightAt(def, lx, lz - e)) / (2 * e);
     const slope = Math.sqrt(sx * sx + sz * sz);
     const jitter = fbmRelief(lx * 2.3 + 40, lz * 2.3 - 17, def.x * 0.11 + def.z * 0.23);
-    terrainVertexColor(def, h, slope, jitter, tmp);
+    // R2-12e: low-frequency patch field at raw coordinates (~55-220 m
+    // shapes), decorrelated from the relief seed so patches do not
+    // follow the hills.
+    const patch = fbmRelief(lx + def.z, lz - def.x, def.x * 0.31 + def.z * 0.47 + 91);
+    terrainVertexColor(def, h, slope, jitter, patch, tmp);
     colours[i * 3] = tmp.r;
     colours[i * 3 + 1] = tmp.g;
     colours[i * 3 + 2] = tmp.b;
@@ -439,6 +457,40 @@ function makeRockCluster(rng, size) {
 // InstancedMeshes by buildWorld (one draw call per part instead of
 // ~12 meshes per palm — the old per-palm groups cost hundreds of
 // draw calls and made the islands read empty anyway).
+// Scalloped surf ring (R2-12e): a flat annulus in the XZ plane whose
+// outer edge wobbles with two sine harmonics, so a foam band reads as
+// uneven surf tongues instead of a perfect machine circle. Built in
+// the XZ plane, so no rotation is needed; MeshBasicMaterial is unlit,
+// so the normals are irrelevant. amp is in metres, freq is the lobe
+// count around the island, phase decorrelates the islands.
+function makeSurfRing(innerR, outerR, seg, amp, freq, phase) {
+  const pos = new Float32Array((seg + 1) * 2 * 3);
+  const idx = [];
+  for (let i = 0; i <= seg; i++) {
+    const a = (i / seg) * Math.PI * 2;
+    const wob =
+      Math.sin(a * freq + phase) * 0.6 +
+      Math.sin(a * (freq * 2 + 1) + phase * 1.7) * 0.4;
+    const ro = outerR + amp * wob;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    pos[(i * 2) * 3] = c * innerR;
+    pos[(i * 2) * 3 + 1] = 0;
+    pos[(i * 2) * 3 + 2] = s * innerR;
+    pos[(i * 2 + 1) * 3] = c * ro;
+    pos[(i * 2 + 1) * 3 + 1] = 0;
+    pos[(i * 2 + 1) * 3 + 2] = s * ro;
+  }
+  for (let i = 0; i < seg; i++) {
+    const b = i * 2;
+    idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  return geo;
+}
+
 function makeIsland(def, rng, palmSpecs, bushSpecs) {
   const island = new THREE.Group();
   island.position.set(def.x, 0, def.z);
@@ -457,8 +509,10 @@ function makeIsland(def, rng, palmSpecs, bushSpecs) {
 
   // Wet-sand ring on the beach rim: a warmer, darker band where the
   // waves wash, so the shoreline grades sand -> wet sand -> foam.
+  // R2-12e: widened (0.80 inner) so the warm wet band reads from the
+  // air instead of hiding under the grass rim.
   const wetSand = new THREE.Mesh(
-    new THREE.RingGeometry(def.radius * 0.86, def.radius * 1.0, 28),
+    new THREE.RingGeometry(def.radius * 0.80, def.radius * 1.0, 28),
     lambert(PALETTE.sandWet, { transparent: true, opacity: 0.85 })
   );
   wetSand.rotation.x = -Math.PI / 2;
@@ -467,34 +521,46 @@ function makeIsland(def, rng, palmSpecs, bushSpecs) {
   wetSand.position.y = 2.14;
   island.add(wetSand);
 
-  // Foam fringe: a pale, semi-transparent band on the water just
-  // outside the beach, so the shoreline reads as surf, not a hard edge.
+  // Foam fringe: scalloped surf bands on the water just outside the
+  // beach, so the shoreline reads as breaking surf, not a hard edge
+  // or a perfect circle. The outer edge of each band wobbles with two
+  // sine harmonics, so foam tongues reach into the sea unevenly.
+  // R2-12e: replaces the old flat RingGeometry bands.
   const foam = new THREE.Mesh(
-    new THREE.RingGeometry(def.radius * 1.0, def.radius * 1.16, 48),
+    makeSurfRing(def.radius * 1.0, def.radius * 1.16, 72, def.radius * 0.045, 7, def.x * 0.13),
     new THREE.MeshBasicMaterial({
       color: PALETTE.seaFoam,
       transparent: true,
-      opacity: 0.45,
+      opacity: 0.7,
       side: THREE.DoubleSide,
     })
   );
-  foam.rotation.x = -Math.PI / 2;
-  // Above the swell peaks (~2.0 m) so the surf band is never
-  // swallowed by a wave crest.
   foam.position.y = 2.2;
   island.add(foam);
-  // Outer wash: a wider, much fainter ring so the foam edge melts
-  // into the sea instead of ending in a hard line.
-  const foamOuter = new THREE.Mesh(
-    new THREE.RingGeometry(def.radius * 1.16, def.radius * 1.45, 48),
+  // Bright surf line right at the waterline: the breaking edge where
+  // the wash meets the sand.
+  const foamEdge = new THREE.Mesh(
+    makeSurfRing(def.radius * 0.99, def.radius * 1.045, 72, def.radius * 0.02, 11, def.z * 0.17),
     new THREE.MeshBasicMaterial({
-      color: PALETTE.seaFoam,
+      color: 0xfffbe8,
       transparent: true,
-      opacity: 0.16,
+      opacity: 0.75,
       side: THREE.DoubleSide,
     })
   );
-  foamOuter.rotation.x = -Math.PI / 2;
+  foamEdge.position.y = 2.2;
+  island.add(foamEdge);
+  // Outer wash: a wider, much fainter scalloped ring so the foam
+  // edge melts into the sea instead of ending in a hard line.
+  const foamOuter = new THREE.Mesh(
+    makeSurfRing(def.radius * 1.16, def.radius * 1.6, 72, def.radius * 0.06, 5, def.x * 0.07 + def.z * 0.11),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.seaFoam,
+      transparent: true,
+      opacity: 0.22,
+      side: THREE.DoubleSide,
+    })
+  );
   foamOuter.position.y = 2.2;
   island.add(foamOuter);
 
@@ -1440,7 +1506,14 @@ export function buildWorld(rng) {
   // looked down on and bright, sky-reflecting at grazing angles near
   // the horizon; and a fine normal ripple, so the specular sparkle
   // shimmers instead of sitting frozen on the swell.
-  const seaMat = phong(0xffffff, { vertexColors: true, shininess: 55, specular: 0x99aabb, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
+  // R2-12e: shininess 55 -> 85 and a warm sun specular (0xffd9a8),
+  // so the low sun's path on the water reads as a live glittering
+  // highlight instead of a dull sheen. envMapIntensity 0.4: the
+  // scene environment was washing the sea pale mint (R2-12c showed
+  // the same wash on the aircraft); the sea keeps some sky
+  // reflection, but the vertex-colour turquoise now survives it.
+  const seaMat = phong(0xffffff, { vertexColors: true, shininess: 85, specular: 0xffd9a8, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
+  seaMat.envMapIntensity = 0.4;
   // polygonOffset: at grazing angles the sea plane (y = 0) and the
   // beach top (y = 2) are only ~0.2 m apart along the view ray, below
   // the depth buffer's resolution at 1 km, so the sea showed through
@@ -1468,16 +1541,18 @@ export function buildWorld(rng) {
         `#include <normal_fragment_begin>
         // Fine ripple: two crossing sines at a much shorter wavelength
         // than the swell, so the sun's specular breaks into sparkle.
-        // Kept very small (0.008), long wavelength (~80 m) and faded
-        // out with distance: the old stronger, high-frequency ripple
-        // aliased into stiff parallel stripes (moire) on the far sea
-        // and sand in the cover shot.
+        // R2-12e: amplitude 0.008 -> 0.032 and frequencies raised, so
+        // the shimmer is actually visible on the near sea at chase
+        // distance (the old ripple was too faint to read in a still).
+        // Still faded out with distance: a stronger, high-frequency
+        // ripple aliased into stiff parallel stripes (moire) on the
+        // far sea and sand in the cover shot.
         float rippleFade = 1.0 - smoothstep(120.0, 450.0, length(vViewPosition));
         normal = normalize(normal + rippleFade * vec3(
-          sin(vG3WorldPos.x * 0.08 + uTime * 1.3) * 0.008 +
-          sin(vG3WorldPos.z * 0.065 - uTime * 1.1) * 0.007,
-          sin(vG3WorldPos.x * 0.055 - uTime * 0.8) * 0.007,
-          cos(vG3WorldPos.z * 0.075 + uTime * 1.5) * 0.008
+          sin(vG3WorldPos.x * 0.11 + uTime * 1.3) * 0.032 +
+          sin(vG3WorldPos.z * 0.09 - uTime * 1.1) * 0.028,
+          sin(vG3WorldPos.x * 0.075 - uTime * 0.8) * 0.028,
+          cos(vG3WorldPos.z * 0.10 + uTime * 1.5) * 0.032
         ));`
       )
       .replace(
@@ -1487,14 +1562,16 @@ export function buildWorld(rng) {
         // does the water turn toward the warm sky colour; seen from
         // above it stays deep. pow 4 (was 5) widens the bright band a
         // little, so the sun's path on the water reads as a broad soft
-        // glow instead of a thin sharp line. Faded out with distance:
+        // glow instead of a thin sharp line. R2-12e: mix 0.25 -> 0.35,
+        // so the horizon sea carries the golden-hour warmth instead
+        // of reading flat pale mint. Faded out with distance:
         // past ~1 km the swell normals + fresnel compressed into dense
         // parallel stripes at the horizon, so the far sea keeps only a
         // whisper of the warm tint instead of banding.
         {
           float fresDist = 1.0 - smoothstep(900.0, 2200.0, length(vViewPosition));
           float fres = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 4.0);
-          gl_FragColor.rgb = mix(gl_FragColor.rgb, uFresnelColor, fres * 0.25 * fresDist);
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, uFresnelColor, fres * 0.35 * fresDist);
         }`
       );
     sea.userData.shader = shader;
