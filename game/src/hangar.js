@@ -264,7 +264,7 @@ export function createHangar(opts) {
       refresh();
       const panel = root.querySelector('.hangar-panel');
       if (panel) {
-        panel.style.padding = '12px 18px';
+        panel.style.padding = '10px 18px';
         panel.scrollTop = 0;
       }
       const h2 = root.querySelector('.hangar-panel h2');
@@ -291,22 +291,22 @@ export function createHangar(opts) {
       }
       if (statsEl) statsEl.style.fontSize = '13px';
       for (const h of root.querySelectorAll('.hangar-panel h3')) {
-        h.style.margin = '8px 0 6px';
+        h.style.margin = '6px 0 4px';
         h.style.fontSize = '15px';
       }
       for (const row of root.querySelectorAll('.refit-row')) {
-        row.style.padding = '5px 8px';
-        row.style.margin = '4px 0';
+        row.style.padding = '4px 8px';
+        row.style.margin = '3px 0';
       }
       for (const note of root.querySelectorAll('.refit-note')) {
         note.style.display = 'none';
       }
       for (const row of root.querySelectorAll('.ledger-row')) {
-        row.style.margin = '4px 0';
+        row.style.margin = '3px 0';
       }
       const map = root.querySelector('.dispatch-map');
-      if (map) { map.style.width = '48%'; }
-      if (medalsEl) medalsEl.style.marginTop = '6px';
+      if (map) { map.style.width = '44%'; }
+      if (medalsEl) medalsEl.style.marginTop = '4px';
       const closeBtn = doc.getElementById('btn-hangar-close');
       if (closeBtn) closeBtn.style.display = 'none';
     },
