@@ -18,7 +18,7 @@ const STRIP_HALF_PX = 160; // fallback: half of the 320px compass panel;
 const PANEL_CSS = [
   '.compass-strip{position:relative;height:20px;overflow:hidden;margin-bottom:2px}',
   '.compass-strip-inner{position:absolute;top:0;left:0;height:100%;will-change:transform}',
-  '.compass-strip .tick{position:absolute;top:0;transform:translateX(-50%);font-size:12px;color:#ffd9a0;white-space:nowrap}',
+  '.compass-strip .tick{position:absolute;top:0;transform:translateX(-50%);font-size:12px;color:#ffd9a0;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.75)}',
   '.compass-strip .tick.cardinal{font-weight:bold;color:#ffb36b;font-size:14px}',
   '#cockpit-panel{position:absolute;left:50%;bottom:110px;transform:translateX(-50%);display:none;gap:16px;align-items:flex-end;z-index:5;pointer-events:none}',
   '#cockpit-panel.on{display:flex}',
@@ -30,10 +30,15 @@ const PANEL_CSS = [
   '.horizon-fixed::after{content:"";position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:#ffb36b}',
   '.gauge-needle{position:absolute;left:50%;bottom:50%;width:3px;height:44%;margin-left:-1.5px;background:#ffb36b;box-shadow:0 0 6px #ffb36b;transform-origin:50% 100%;z-index:2}',
   '.gauge-hub{position:absolute;left:50%;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:#ffb36b;z-index:3}',
-  '.gauge-label{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:10px;letter-spacing:2px;color:#ffd9a0;z-index:2}',
+  '.gauge-label{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:10px;letter-spacing:2px;color:#ffd9a0;z-index:2;text-shadow:0 1px 3px rgba(0,0,0,.9)}',
   '.gauge-digital{position:absolute;left:0;right:0;top:12px;text-align:center;font-size:15px;font-weight:bold;color:#fff3e0;z-index:2}',
   '.cockpit-lamps{display:flex;flex-direction:column;gap:10px;padding-bottom:8px}',
-  '.lamp-row{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:2px;color:#ffd9a0}',
+  // R2-11a2 — warning-lamp labels sat pale (#ffd9a0, no shadow) on the
+  // bright pink nose / sunlit terrain, so STALL/FUEL washed out. A dark
+  // halo shadow plus a small dark pill behind each label keeps them
+  // readable anywhere without moving the HUD layout.
+  '.lamp-row{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:2px;color:#ffd9a0;font-weight:500;text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 8px rgba(0,0,0,.85)}',
+  '.lamp-row span{background:rgba(8,14,22,.55);padding:2px 7px;border-radius:999px}',
   '.lamp{width:16px;height:16px;border-radius:50%;background:#3a2a1a;border:2px solid rgba(255,179,107,.45);flex:none}',
   '.lamp.lit-red{background:#ff5252;border-color:#ff8a8a;box-shadow:0 0 14px #ff5252}',
   '.lamp.lit-amber{background:#ffc233;border-color:#ffe08a;box-shadow:0 0 14px #ffc233}',
