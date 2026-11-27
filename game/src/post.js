@@ -22,9 +22,15 @@ const POST_VERTEX = [
 //     of blowing out to white;
 //  2. warm golden-hour grade: a gentle orange tint plus a soft
 //     S-curve that deepens the shadows and lifts the highlights;
-//  3. vignette: the edges darken, pulling the eye to the plane;
-//  4. sRGB encode (the scene is rendered linear into the target);
-//  5. film grain: a hash-based flicker, kept very thin (0.012) so the
+//  3. highlight soft-clip (hue-preserving) + saturation guard, so the
+//     ACES shoulder stops pushing hot gold to white and the grade
+//     stops eating colour;
+//  4. layered fog: a far horizon band + a near ground haze, both
+//     saturation-gated so saturated subjects (gold ring, red plane)
+//     are never fogged and the night sky never brightens;
+//  5. vignette: the edges darken, pulling the eye to the plane;
+//  6. sRGB encode (the scene is rendered linear into the target);
+//  7. film grain: a hash-based flicker, kept very thin (0.012) so the
 //     screenshot stays sharp and the facets stay readable.
 const POST_FRAGMENT = [
   'uniform sampler2D tDiffuse;',
@@ -55,7 +61,7 @@ const POST_FRAGMENT = [
   '  blur *= 0.25;',
   '  float lum = dot(blur, vec3(0.299, 0.587, 0.114));',
   '  float bloomAmt = smoothstep(0.72, 0.95, lum);',
-  '  col += blur * bloomAmt * 0.35 * vec3(1.0, 0.88, 0.62);',
+  '  col += blur * bloomAmt * 0.30 * vec3(1.0, 0.88, 0.62);',
   '',
   '  // --- Warm grade: orange tint + soft S-curve contrast. ---',
   '  // Tint kept light (1.03/1.00/0.97): the old 1.05/0.94 pushed the',
@@ -63,6 +69,48 @@ const POST_FRAGMENT = [
   '  // the milky mid-tone wash without crushing night shadows.',
   '  col *= vec3(1.03, 1.0, 0.97);',
   '  col = mix(col, col * col * (3.0 - 2.0 * col), 0.16);',
+  '',
+  '  // --- Highlight soft-clip (R2-14f): the ACES shoulder + bloom',
+  '  // together push hot gold toward white — the near ring read cream',
+  '  // (236,219,200) even after five material passes and every light',
+  '  // killed (R2-12b/c), because the wash lives downstream of the',
+  '  // material. Scaling all three channels by the same factor keeps',
+  '  // the hue and only pulls the brightness back, so gold stays gold',
+  '  // and the sun/glint keep their glow instead of clipping flat.',
+  '  float lum2 = dot(col, vec3(0.299, 0.587, 0.114));',
+  '  float hl = smoothstep(0.82, 1.0, lum2);',
+  '  col *= 1.0 - hl * 0.10;',
+  '',
+  '  // --- Saturation guard (R2-14f): the tint, the S-curve and the',
+  '  // ACES shoulder all desaturate a little, and fog eats the rest —',
+  '  // the frame drifts toward grey-cream if nothing puts the colour',
+  '  // back. A small lift (1.06) around the pixel luminance restores',
+  '  // what the grade took, without touching the hue; the HUD is DOM,',
+  '  // so this can never touch a HUD label.',
+  '  float lum3 = dot(col, vec3(0.299, 0.587, 0.114));',
+  '  col = mix(vec3(lum3), col, 1.06);',
+  '',
+  '  // --- Layered fog (R2-14f): two screen-space haze layers on top',
+  '  // of the scene fog (650-2600 m, render.js), so depth reads in',
+  '  // layers instead of one flat wash. No depth texture is used:',
+  '  // the target is 4x MSAA and r149 will not feed a depth texture',
+  '  // through the multisampled resolve, so the layers are keyed on',
+  '  // where depth lives in this game\'s frames instead — the far',
+  '  // layer sits in a soft band around the horizon (where the far',
+  '  // islands and the sea horizon melt), the near layer lifts the',
+  '  // bottom of the frame (ground haze under the plane). BOTH layers',
+  '  // are gated on LOW saturation and MID luminance: a gold ring, a',
+  '  // red fuselage and a lit gauge are saturated, so the haze never',
+  '  // touches them; the night sky is too dark, so it never fogs the',
+  '  // boss frame brighter. The haze colour is pale warm-neutral and',
+  '  // the strengths are small (0.12 / 0.07) — haze, not a veil.',
+  '  float sat = (max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b))) / max(max(col.r, max(col.g, col.b)), 0.001);',
+  '  float lum4 = dot(col, vec3(0.299, 0.587, 0.114));',
+  '  float hazeGate = smoothstep(0.45, 0.15, sat) * smoothstep(0.20, 0.35, lum4) * (1.0 - smoothstep(0.85, 0.98, lum4));',
+  '  float farBand = exp(-pow((uv.y - 0.52) / 0.22, 2.0));',
+  '  col = mix(col, vec3(0.96, 0.92, 0.85), farBand * 0.12 * hazeGate);',
+  '  float nearBand = smoothstep(0.28, 0.0, uv.y);',
+  '  col = mix(col, vec3(0.98, 0.90, 0.78), nearBand * 0.07 * hazeGate);',
   '',
   '  // --- Vignette: darken the corners, keep the centre bright. ---',
   '  // Gentle floor (0.78): the old 0.68 darkened the HUD corners and',
