@@ -107,6 +107,14 @@ export function createShots(render, flight, world, missions) {
       // northbound pose inside the cell was tried and reverted: at
       // ~1 fps the chase camera never settles on the new yaw in the
       // screenshot window and storm ring 4 never entered the frame.)
+      // R2-11d: a ring-3 pose (480/540, -1100) was tried twice to
+      // put the drone pengintai in frame — the drone IS there (red
+      // eye + amber ring, confirmed in a crop) but reads as a speck
+      // at 120 m and the frame loses the big gold ring + dark storm
+      // sky to a green hill at 60 m; both tries are worse than the
+      // ring-1 shot, so the pose stays at ring 1 and the R2-10
+      // boss frame stands. The combat still reads in this shot
+      // through the HUD: objective drone count + weapon line below.
       // Storm is switched on here (posed frames never run the live
       // storm branch in main.js) so setTimeOfDay below picks the
       // overcast env map. (HUD target still names ring 1 — posed
@@ -118,6 +126,18 @@ export function createShots(render, flight, world, missions) {
       // 0.7 keeps the afterburner off so the livery is not blown
       // out a second time. Normal-play lightning is untouched.
       startForShot(11, 'free');
+      // R2-11d: spawn the boss drones in the posed frame too —
+      // weapons.update only runs in live play, so a posed boss
+      // shot would otherwise never arm the weapon HUD line. One
+      // tick spawns them at their anchors (setSortie 'boss'); the
+      // posed frame freezes them there. At this ring-1 pose they
+      // sit hundreds of metres off-frame, so the shot keeps its
+      // R2-10 composition and gains only the weapon line.
+      if (typeof window !== 'undefined' && window.__flightGame
+          && window.__flightGame.weapons
+          && typeof window.__flightGame.weapons.update === 'function') {
+        window.__flightGame.weapons.update(0.016, false, 'boss');
+      }
       pose(120, 88, 300, -90, 0, 80, 0.7, 15);
       render.setView('chase');
       if (render && typeof render.setStorm === 'function') render.setStorm(true);
