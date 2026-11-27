@@ -800,23 +800,31 @@ function makeRing(def, color, tilt, num) {
   ring.position.set(def.x, def.y, def.z);
   ring.userData = { radius: def.radius, passed: false };
 
+  // R2-12b — gold that reads GOLD, not pale white. Passes 1–3 tuned
+  // the standard material, pass 4 switched to Lambert (no specular)
+  // — yet the near ring STILL rendered cream while a runtime probe
+  // proved the pipeline keeps hue (pure-blue Lambert tube reads
+  // saturated blue; distant face-on rings read amber). The remaining
+  // mechanism is brightness: the near ring is sun-blasted, and the
+  // ACES shoulder desaturates bright warm colours toward white.
+  // Pass 5, still inside this function only: darken the hue hard
+  // (×0.5) so the lit tube stays on the linear part of the curve
+  // where hue survives, and lean on the emissive (0.6) for the dusk
+  // glow instead of brightness. Hue family per sortie unchanged;
+  // geometry (radius/tube) untouched.
+  const deep = new THREE.Color(color).multiplyScalar(0.5);
   const gold = new THREE.Mesh(
     new THREE.TorusGeometry(def.radius, 1.7, 10, 36),
-    new THREE.MeshStandardMaterial({
-      color,
-      metalness: 0.85,
-      roughness: 0.28,
-      emissive: color,
-      emissiveIntensity: 0.28,
-    })
+    lambert(deep, { emissive: deep, emissiveIntensity: 0.6 })
   );
   ring.add(gold);
 
   // Emissive rim: a thin bright torus just outside the main tube, so
-  // the ring's edge glows even against a bright sky.
+  // the ring's edge glows even against a bright sky. R2-12b — deeper
+  // amber (was pale cream 0xffe9a8, which read white at distance).
   const rim = new THREE.Mesh(
     new THREE.TorusGeometry(def.radius + 1.9, 0.32, 6, 36),
-    new THREE.MeshBasicMaterial({ color: 0xffe9a8 })
+    new THREE.MeshBasicMaterial({ color: 0xf59e0b })
   );
   ring.add(rim);
 
@@ -826,7 +834,7 @@ function makeRing(def, color, tilt, num) {
     new THREE.MeshBasicMaterial({
       color,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.16,
       side: THREE.DoubleSide,
     })
   );

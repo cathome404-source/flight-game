@@ -78,6 +78,23 @@ function makeGlowTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
+// White radial glow texture (canvas, no image file) for the nav
+// lights — tinted per light by the sprite colour, so the same
+// texture serves red/green/white without three warm-orange copies.
+function makeNavGlowTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(canvas);
+}
+
 // Build one aircraft by id ('cendrawasih' | 'rajawali' | 'komodo').
 // Returns the group plus the moving parts the game animates every frame.
 export function makeAircraft(id) {
@@ -89,17 +106,20 @@ export function makeAircraft(id) {
   const group = new THREE.Group();
   group.name = 'aircraft-' + key;
 
-  // Low metalness on the painted skin (0.15): at dusk the first
-  // 0.35 value washed the livery out to grey-purple under the violet
-  // sky light — paint is dielectric, the shine comes from the metal
-  // parts (spinner, struts) and the glass, not the fuselage.
-  const skin = standard(liv.skin, { roughness: 0.45, metalness: 0.15 });
-  const accent = standard(liv.accent, { roughness: 0.5, metalness: 0.15 });
-  const accentDark = standard(liv.accentDark, { roughness: 0.6, metalness: 0.1 });
-  const band = standard(liv.band, { roughness: 0.5, metalness: 0.15 });
+  // R2-12b — clear per-part PBR variation, stylized-realistic paint:
+  // the painted skin stays dielectric (low metalness) so the livery
+  // never washes grey; the accent stripes/band get a clearcoat feel
+  // (low roughness, mid metalness) so they glint under the low sun;
+  // tires and fabric are dead matte. Roughness/metalness now differ
+  // enough per part to read at a glance.
+  const skin = standard(liv.skin, { roughness: 0.42, metalness: 0.2 });
+  const accent = standard(liv.accent, { roughness: 0.26, metalness: 0.45 });
+  const accentDark = standard(liv.accentDark, { roughness: 0.55, metalness: 0.15 });
+  const band = standard(liv.band, { roughness: 0.28, metalness: 0.4 });
   const metal = standard(0x8f969e, { roughness: 0.32, metalness: 0.85 });
   const dark = standard(0x2b2f36, { roughness: 0.75, metalness: 0.2 });
-  const bladeMat = standard(0x23272e, { roughness: 0.6, metalness: 0.4, transparent: true });
+  const tire = standard(0x1e1e1e, { roughness: 0.95, metalness: 0.0 });
+  const bladeMat = standard(0x23272e, { roughness: 0.5, metalness: 0.4, transparent: true });
   const glass = standard(0x1c2f42, {
     roughness: 0.12, metalness: 0.15, flatShading: true,
     transparent: true, opacity: 0.88,
@@ -108,7 +128,7 @@ export function makeAircraft(id) {
   // view), true = near-invisible glass (cockpit view). Toggled in
   // update() when plane.cockpit changes; the material swap needs one
   // recompile (needsUpdate) per switch, never per frame.
-  const panelDark = standard(0x3a2e22, { roughness: 0.85, metalness: 0.1 });
+  const panelDark = standard(0x241a12, { roughness: 0.9, metalness: 0.05 });
   let glassCockpit = false;
 
   const fusFront = -sh.fusLen / 2;
@@ -155,7 +175,7 @@ export function makeAircraft(id) {
     sideSeam.position.set(side * (sh.fusR - 0.25), sh.fusR * 0.5, 0.3);
     group.add(sideSeam);
   }
-  for (const ringDef of [{ z: -1.2, r: sh.fusR * 0.8 }, { z: 1.2, r: sh.fusR * 0.95 }]) {
+  for (const ringDef of [{ z: -1.2, r: sh.fusR * 0.8 }, { z: 0.1, r: sh.fusR * 0.92 }, { z: 1.2, r: sh.fusR * 0.95 }]) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(ringDef.r, 0.025, 4, 18), panelDark);
     ring.position.z = ringDef.z;
     group.add(ring);
@@ -321,7 +341,7 @@ export function makeAircraft(id) {
     strut.rotation.z = side * 0.25;
     pivot.add(strut);
     const wheel = new THREE.Mesh(
-      new THREE.CylinderGeometry(sh.wheelR, sh.wheelR, 0.28, 10), lambert(0x1e1e1e));
+      new THREE.CylinderGeometry(sh.wheelR, sh.wheelR, 0.28, 10), tire);
     wheel.rotation.z = Math.PI / 2;
     wheel.position.set(side * 0.15, -1.1, 0);
     pivot.add(wheel);
@@ -334,7 +354,7 @@ export function makeAircraft(id) {
     gearPivots[side < 0 ? 'left' : 'right'] = pivot;
   }
   const tailWheel = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.2, 0.2, 0.16, 8), lambert(0x1e1e1e));
+    new THREE.CylinderGeometry(0.2, 0.2, 0.16, 8), tire);
   tailWheel.rotation.z = Math.PI / 2;
   tailWheel.position.set(0, -0.75, 3.9);
   group.add(tailWheel);
@@ -353,7 +373,12 @@ export function makeAircraft(id) {
   }
 
   // --- Navigation lights: red port, green starboard, white tail.
+  // R2-12b — bigger bulbs plus a small additive glow sprite each, so
+  // they read at dusk/night instead of vanishing against the sky.
+  // The glow is a sprite (always faces camera), tinted per light.
   const navLights = {};
+  const navGlows = {};
+  const navGlowTex = makeNavGlowTexture();
   const lightDefs = [
     { key: 'left', color: 0xff2a1a, pos: [-halfSpan, sh.wingY, -0.2] },
     { key: 'right', color: 0x2aff5a, pos: [halfSpan, sh.wingY, -0.2] },
@@ -361,12 +386,21 @@ export function makeAircraft(id) {
   ];
   for (const def of lightDefs) {
     const bulb = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 8, 6),
+      new THREE.SphereGeometry(0.2, 8, 6),
       new THREE.MeshBasicMaterial({ color: def.color })
     );
     bulb.position.set(def.pos[0], def.pos[1], def.pos[2]);
     group.add(bulb);
     navLights[def.key] = bulb;
+    const glowMat = new THREE.SpriteMaterial({
+      map: navGlowTex, color: def.color, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const glow = new THREE.Sprite(glowMat);
+    glow.position.set(def.pos[0], def.pos[1], def.pos[2]);
+    glow.scale.set(1.9, 1.9, 1);
+    group.add(glow);
+    navGlows[def.key] = glow;
   }
 
   // --- Afterburner (Rajawali only): a flickering flame tongue + hot
@@ -460,7 +494,10 @@ export function makeAircraft(id) {
       plane.propAngle = (plane.propAngle + speed * dt) % (Math.PI * 2);
       propeller.rotation.z = plane.propAngle;
 
-      const targetBlur = 0.02 + plane.throttle * 0.10;
+      // R2-12b — blur disc ramps much harder with throttle (0.03 at
+      // idle, 0.25 at full) so high RPM reads as a solid smooth disc,
+      // and the blades fade out faster so they stop flickering.
+      const targetBlur = 0.03 + plane.throttle * 0.22;
       blurDisc.material.opacity +=
         (targetBlur - blurDisc.material.opacity) * Math.min(1, dt * 4);
 
@@ -470,7 +507,7 @@ export function makeAircraft(id) {
       blurDisc.visible = showProp;
       for (const b of blades) b.visible = showProp;
       for (const t of tips) t.visible = showProp;
-      bladeMat.opacity = Math.max(0.12, 1.15 - plane.throttle * 2.2);
+      bladeMat.opacity = Math.max(0.08, 1.2 - plane.throttle * 2.6);
 
       // R2-11a — cockpit glass: from the pilot's eye the canopy bubble
       // sits right ahead, and the dark faceted glass (opacity 0.88)
@@ -529,6 +566,13 @@ export function makeAircraft(id) {
         const dim = k === 'left' ? 0x4a0d06 : k === 'right' ? 0x0a3d18 : 0x6b6250;
         navLights[k].material.color.setHex(on ? base : dim);
         navLights[k].scale.setScalar(on ? 1 : 0.7);
+        // R2-12b — glow sprite pulses with the bulb: bright halo when
+        // lit, faint ember when off, so the flash reads at dusk.
+        const glow = navGlows[k];
+        if (glow) {
+          glow.material.opacity = on ? 0.9 : 0.08;
+          glow.scale.setScalar(on ? 1.9 : 1.0);
+        }
       }
 
       // Afterburner (Rajawali only): wakes past 80% throttle and
