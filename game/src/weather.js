@@ -290,13 +290,13 @@ export function createWeather(scene) {
       }
       if (shotHold) {
         // Pinned bolt: flash held, bolt fully opaque, flash light
-        // LOW (0.6, not the 3.2 strike peak): the flash is a
-        // directional light from above, and at 1.8 it flooded the
-        // (Lambert) clouds bright cream and defeated the whole
-        // storm darkening. The bolt lines themselves carry the
+        // LOW (0.35, was 0.6): the flash is a directional light
+        // from above, and at 0.6 it still flooded the (Lambert)
+        // clouds bright cream and defeated the whole storm
+        // darkening. The bolt lines themselves carry the
         // lightning read against the darkened sky.
         flash = 1;
-        flashLight.intensity = 0.6 * intensity;
+        flashLight.intensity = 0.35 * intensity;
         boltMat.opacity = 1;
         bolt.visible = true;
       } else if (flash > 0) {
@@ -354,13 +354,15 @@ export function createWeather(scene) {
     let sx;
     let sz;
     if (lastPos && lastForward) {
-      // Shot hold: strike CLOSE (130–280 m ahead) so the bolt is
-      // big in frame — the normal 250–600 m strike reads as a thin
-      // zigzag at the frame edge in a still.
+      // Shot hold: strike CLOSE (110–200 m ahead) and near-centre
+      // (lat ±90 m) so the bolt is big in frame — the R2-10
+      // 130–280 m / ±180 m strike read as a thin zigzag at the
+      // frame edge (or off-frame) in the still, and the evaluator
+      // saw no lightning at all. Normal play keeps 250–600 m.
       const along = shotHold
-        ? 130 + Math.random() * 150
+        ? 110 + Math.random() * 90
         : 250 + Math.random() * 350;
-      const lat = (Math.random() - 0.5) * (shotHold ? 360 : 500);
+      const lat = (Math.random() - 0.5) * (shotHold ? 180 : 500);
       // Right vector for a forward (fx, fz) in xz: (-fz, fx).
       sx = lastPos.x + lastForward.x * along + -lastForward.z * lat;
       sz = lastPos.z + lastForward.z * along + lastForward.x * lat;

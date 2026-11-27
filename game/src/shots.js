@@ -75,19 +75,20 @@ export function createShots(render, flight, world, missions) {
     const ringZ = WORLD.rings[0].z;
 
     if (name === 'cover') {
-      // H3 — dramatic cover: east of Garuda over open sea, heading
-      // SSW (yaw 25, bearing ~205) so the low sun sits ~60 deg off
-      // the nose — out of frame — instead of dead ahead blowing the
-      // plane white (R2-10 evaluator: sun + afterburner made the
-      // Rajawali a white blob). Throttle 0.7 keeps the afterburner
-      // off in the shot (it wakes past 80%) and the shot glare is
-      // dimmed to 0.25 — shot mode only, normal play untouched.
-      // Merapi Kecil still looms on the right, rings 2 and 3 in the
-      // middle distance ahead (ring line z = 330, plane flying +z).
+      // H3 — dramatic cover: ~300 m short of ring 2 (620, 80, -120)
+      // over open sea east of Garuda, heading NNW (yaw 26) so the
+      // low WSW sun sits ~75 deg off the nose — out of frame —
+      // instead of dead ahead blowing the plane white. Try 1
+      // (eastbound on the ring line, -230/330) failed: ring 1 sits
+      // over the Garuda island cone, so the frame was land + a wall
+      // of cream cloud, not sea. This pose keeps the old frame's
+      // money (open sea below, sunlit tail, volcano ahead) with the
+      // ring now BIG ahead and Merapi Kecil looming beyond it.
+      // Throttle 0.7 keeps the afterburner off; shot glare 0.15.
       startForShot(1, 'free');
-      pose(1650, 100, 100, 25, 0, 70, 0.7, 0);
+      pose(750, 90, 150, 26, 0, 70, 0.7, 0);
       render.setView('chase');
-      if (render && typeof render.setShotGlare === 'function') render.setShotGlare(0.25);
+      if (render && typeof render.setShotGlare === 'function') render.setShotGlare(0.15);
     } else if (name === 'cockpit') {
       // Cockpit view, ~150 m short of ring 1 (120, 60, 330) so the
       // gold ring + number board fill the view ahead instead of
@@ -102,23 +103,26 @@ export function createShots(render, flight, world, missions) {
       if (render && typeof render.addLook === 'function') render.addLook(-60, 0);
     } else if (name === 'boss') {
       // Boss finale (sortie 12): storm on, dusk pinned via ?time=.
-      // Rajawali banked 15 deg at 80 m/s, 180 m short of storm ring 1
-      // (300, 80, 300) so the gold storm ring reads big ahead. (A
-      // northbound pose inside the cell was tried and reverted: at
-      // ~1 fps the chase camera never settles on the new yaw in the
-      // screenshot window and storm ring 4 never entered the frame.)
-      // R2-11d: a ring-3 pose (480/540, -1100) was tried twice to
-      // put the drone pengintai in frame — the drone IS there (red
-      // eye + amber ring, confirmed in a crop) but reads as a speck
-      // at 120 m and the frame loses the big gold ring + dark storm
-      // sky to a green hill at 60 m; both tries are worse than the
-      // ring-1 shot, so the pose stays at ring 1 and the R2-10
-      // boss frame stands. The combat still reads in this shot
-      // through the HUD: objective drone count + weapon line below.
+      // Rajawali banked 15 deg at 80 m/s, ~90 m short of storm ring 7
+      // (-900, 70, -400) so the gold storm ring reads big ahead, with
+      // drone 3 on the same spot in frame. (A northbound pose inside
+      // the cell was tried and reverted: at ~1 fps the chase camera
+      // never settles on the new yaw in the screenshot window and
+      // storm ring 4 never entered the frame.)
+      // R2-11g: pose at boss ring 7, not ring 1 — drone 3 sits ON
+      // ring 7 (-900, -400, 95), so a ~90 m approach from the SE
+      // puts the drone BETWEEN the chase camera and the big gold
+      // ring with the dark storm cell (-300, -800) as the backdrop,
+      // instead of the ring-1 pose where all three drones sit
+      // hundreds of metres off-frame. R2-11d proved a ring-3 pose
+      // costs the composition (green hill, ring out of frame at
+      // 60 m); ring 7 is over open sea inside the cell, so the
+      // closer approach keeps sea + dark cloud behind the drone
+      // instead of a hill. HUD still names ring 1 (posed staging —
+      // the mission's current ring never advances in a still).
       // Storm is switched on here (posed frames never run the live
       // storm branch in main.js) so setTimeOfDay below picks the
-      // overcast env map. (HUD target still names ring 1 — posed
-      // staging, no ring flown.)
+      // overcast env map.
       // R2-10: pin the storm — setShotHold forces intensity 1 at
       // once (posed frames never re-run setTimeOfDay, so the old
       // eased ramp never darkened the sky), builds one bolt ahead
@@ -130,15 +134,19 @@ export function createShots(render, flight, world, missions) {
       // weapons.update only runs in live play, so a posed boss
       // shot would otherwise never arm the weapon HUD line. One
       // tick spawns them at their anchors (setSortie 'boss'); the
-      // posed frame freezes them there. At this ring-1 pose they
-      // sit hundreds of metres off-frame, so the shot keeps its
-      // R2-10 composition and gains only the weapon line.
+      // posed frame freezes them there. At this ring-7 pose drone 3
+      // sits ~72 m ahead of the camera, in frame by design.
       if (typeof window !== 'undefined' && window.__flightGame
           && window.__flightGame.weapons
           && typeof window.__flightGame.weapons.update === 'function') {
         window.__flightGame.weapons.update(0.016, false, 'boss');
       }
-      pose(120, 88, 300, -90, 0, 80, 0.7, 15);
+      // R2-11g try 2: plane at ring height (y 72 vs ring 70) and
+      // 120 m short — try 1 (y 95, 90 m) put the ring's centre at
+      // screen (656, 570), low and hidden behind the plane/terrain
+      // while the drone sat at (604, 432). At ring height the gold
+      // torus should sit at frame centre with the drone above it.
+      pose(-815, 72, -315, 45, 0, 80, 0.7, 15);
       render.setView('chase');
       if (render && typeof render.setStorm === 'function') render.setStorm(true);
       if (render && render.weather && typeof render.weather.setShotHold === 'function') {

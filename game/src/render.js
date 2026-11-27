@@ -585,16 +585,25 @@ export function createRenderer(canvas, world) {
     if (storm > 0.01) {
       // R2-10: stronger storm sky lerp (0.85/0.9 vs 0.7) — the old
       // weights left a pink dusk band under the storm.
-      horizon.lerp(new THREE.Color(0x4a5568), storm * 0.85);
-      zenith.lerp(new THREE.Color(0x1a2233), storm * 0.9);
+      // R2-11g: harder still (0.95/0.95) — the R2-10 frame still
+      // read as grey-blue dusk with cream clouds, not a storm.
+      horizon.lerp(new THREE.Color(0x4a5568), storm * 0.95);
+      zenith.lerp(new THREE.Color(0x1a2233), storm * 0.95);
+      // R2-11g: the sun dim alone did not darken the scene — the
+      // hemisphere + ambient fill kept terrain, clouds and the
+      // plane bright. The fill is dimmed with the storm at the
+      // assignments below (storm = 0 is a no-op, so clear-weather
+      // play is untouched).
     }
     // R2-10b: dim the (Lambert) cloud layers with the storm too —
     // the sky dome darkened but the cream cloud puffs stayed
     // bright, and they are the biggest sky area in the boss frame.
     // Runs at every storm level INCLUDING 0, so leaving the storm
     // restores full brightness instead of leaving dimmed clouds.
+    // R2-11g: 0.55 was not enough — the puffs still read cream
+    // against the graded sky, so the storm dim deepens to 0.7.
     {
-      const cloudDim = 1 - storm * 0.55;
+      const cloudDim = 1 - storm * 0.7;
       if (world && world.cloudLayers) {
         for (const layer of world.cloudLayers) {
           if (layer && layer.material && layer.material.color) {
@@ -611,9 +620,11 @@ export function createRenderer(canvas, world) {
     sun.intensity *= 1 - storm * 0.55;
     hemi.color.copy(zenith);
     hemi.groundColor.copy(lerpHex(0xe8cf9a, 0x1a2436, nightFactor));
-    hemi.intensity = num('hemi');
+    // R2-11g: dim the fill with the storm — the sun dim alone left
+    // terrain, clouds and the plane bright in the boss frame.
+    hemi.intensity = num('hemi') * (1 - storm * 0.45);
     ambient.color.copy(lerpHex(0xffe0b3, 0x8fb0ff, nightFactor));
-    ambient.intensity = num('ambient');
+    ambient.intensity = num('ambient') * (1 - storm * 0.45);
     scene.fog.color.copy(horizon);
     // Layered depth: at dusk the haze closes in (nearer far plane),
     // so far islands melt into the orange haze while the foreground
@@ -625,7 +636,8 @@ export function createRenderer(canvas, world) {
     if ('toneMappingExposure' in renderer) {
       // Storm grade (R2-4): lower exposure while the storm is on
       // (R2-10: -0.3, was -0.2 — the still kept reading as dusk).
-      renderer.toneMappingExposure = num('exposure') + duskW * 0.06 - storm * 0.3;
+      // R2-11g: -0.45 — the R2-10 frame still read as bright dusk.
+      renderer.toneMappingExposure = num('exposure') + duskW * 0.06 - storm * 0.45;
     }
     // Sun glow + disc follow the sun; at night they become a pale
     // moon (small disc, faint cool glow) instead of vanishing.
