@@ -14,6 +14,7 @@ import { buildWorld } from './world.js';
 import { makeAircraft } from './aircraft.js';
 import { createFlight } from './flight.js';
 import { createMissions } from './missions.js';
+import { createWeapons } from './weapons.js';
 import { createHud, gradeTouchdown, medalForGrade, crashCauses } from './hud.js';
 import { createAudio } from './audio.js';
 import { createRenderer } from './render.js';
@@ -60,6 +61,24 @@ const audio = createAudio();
 const render = createRenderer(canvas, world);
 render.scene.add(aircraft.group);
 render.setAircraft(aircraft);
+
+// R2-11c combat: Space fires a tracer at drone pengintai in sorties
+// 6 (chase) and 12 (boss). A drone takes 2 hits; dropping one scores
+// +300 through missions.droneDown(), flashes an effects burst and
+// shakes the camera a touch. No drones anywhere else.
+const weapons = createWeapons(render.scene, flight, {
+  onDroneDown: (drone, points) => {
+    missions.droneDown();
+    hud.showMessage('Drone pengintai jatuh!  +' + points);
+    audio.ring();
+    render.shake(0.3);
+  },
+  onBurst: (pos) => {
+    if (render.effects && typeof render.effects.burst === 'function') {
+      render.effects.burst(pos);
+    }
+  },
+});
 
 // ---- Hangar: pick the aircraft. Swapping rebuilds the 3D model, retunes
 // the flight model from the new plane's stats, resets the parked plane
@@ -225,6 +244,7 @@ window.__flightGame = {
   hud,
   audio,
   hangar,
+  weapons,
   selectAircraft,
   effects: render.effects,
   // R2-5b test hooks: the approach-trace recorder and its samples, so
@@ -280,7 +300,8 @@ function liveScore() {
   const s = TUNING.scoring;
   return (
     missions.ringsPassed * s.ringPoints +
-    missions.checkpointsVisited * s.checkpointPoints
+    missions.checkpointsVisited * s.checkpointPoints +
+    (missions.dronesDown || 0) * (s.dronePoints || 0)
   );
 }
 
@@ -321,6 +342,9 @@ function combinedHudState() {
     stalled: fs.stalled,
     damage: fs.damage,
     wind: fs.wind,
+    // R2-11c combat: null outside chase/boss, so the HUD weapon line
+    // only appears in the two combat sorties.
+    weapon: weapons ? weapons.status() : null,
     // Storm gust for the HUD wind arrow (0 outside the boss sortie).
     gust: fs.gust,
     storm: stormActive(),
@@ -769,6 +793,15 @@ function frame(now) {
     // the same sign flight.js expects — passed through untouched.
     flight.update(dt, input);
     missions.update(dt);
+    // R2-11c combat: Space fires while held (cooldown-gated inside
+    // weapons); drones only exist in the chase and boss sorties.
+    weapons.update(
+      dt,
+      input.isDown('Space'),
+      missions.current && missions.status === 'active'
+        ? missions.current.id
+        : null
+    );
     // Approach trace: one sample every ~0.25 s of play.
     traceAccum += dt;
     if (traceAccum >= 0.25) {

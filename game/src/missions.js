@@ -84,6 +84,8 @@ export function createMissions(flight, world, config) {
     landedGently: false,
     landedInZone: false,
     boatPass: false,
+    // R2-11c combat: drones shot down in this sortie (chase + boss).
+    dronesDown: 0,
     // R2-5b debrief: last touchdown (with sink/speed/bank at contact),
     // crash snapshot (from flight.crash) and the score breakdown of the
     // finished — or failed — sortie. Reset on every start().
@@ -126,6 +128,7 @@ export function createMissions(flight, world, config) {
       api.landedGently = false;
       api.landedInZone = false;
       api.boatPass = false;
+      api.dronesDown = 0;
       api.failReason = null;
       api.touchdown = null;
       api.crashInfo = null;
@@ -146,6 +149,14 @@ export function createMissions(flight, world, config) {
       if (api.index >= 0) return api.start(api.index);
       if (api.current && api.current.id === freeFlight.id) return api.start('free');
       return false;
+    },
+
+    // R2-11c combat: one drone pengintai shot down. Counts toward the
+    // sortie's score (breakdown.drones) and the live HUD total; it
+    // never completes a sortie by itself — the gates/rings still do.
+    droneDown() {
+      if (api.status !== 'active') return;
+      api.dronesDown += 1;
     },
 
     update(dt) {
@@ -214,6 +225,7 @@ export function createMissions(flight, world, config) {
         landing: 0,
         takeoff: 0,
         timeBonus: 0,
+        drones: 0,
       };
       if (def.kind === 'takeoff') {
         breakdown.takeoff = TAKEOFF_POINTS;
@@ -224,13 +236,14 @@ export function createMissions(flight, world, config) {
       } else if (def.kind === 'landing' || def.kind === 'rescue') {
         if (api.landedGently) breakdown.landing = scoreCfg.landingPoints;
       }
+      breakdown.drones = (api.dronesDown || 0) * (scoreCfg.dronePoints || 0);
       if (def.parTime) {
         const under = def.parTime - api.elapsed;
         if (under > 0) breakdown.timeBonus = Math.round(under * scoreCfg.timeBonusPerSecond);
       }
       const points =
         breakdown.rings + breakdown.checkpoints + breakdown.landing +
-        breakdown.takeoff + breakdown.timeBonus;
+        breakdown.takeoff + breakdown.timeBonus + breakdown.drones;
       api.score = points;
       api.breakdown = breakdown;
       api.status = 'complete';
@@ -282,9 +295,10 @@ export function createMissions(flight, world, config) {
         landing: 0,
         takeoff: 0,
         timeBonus: 0,
+        drones: (api.dronesDown || 0) * (scoreCfg.dronePoints || 0),
       };
       api.score =
-        api.breakdown.rings + api.breakdown.checkpoints;
+        api.breakdown.rings + api.breakdown.checkpoints + api.breakdown.drones;
       if (api.onFail) {
         api.onFail({
           mission: api.current,
@@ -326,6 +340,14 @@ export function createMissions(flight, world, config) {
             ? Math.min(99, Math.round((api.elapsed / def.timeLimit) * 100))
             : 0;
           line += ' Target sudah ' + pct + '% jalan ke pulau jauh!';
+          line += ' Drone pengintai jatuh ' + (api.dronesDown || 0) +
+            '/' + ((cfgWorld.chaseDrones || []).length || 2) +
+            ' — tembak dengan [Space].';
+        }
+        if (def.id === 'boss') {
+          line += ' Drone pengintai jatuh ' + (api.dronesDown || 0) +
+            '/' + ((cfgWorld.bossDrones || []).length || 3) +
+            ' — tembak dengan [Space].';
         }
         if (def.id === 'timetrial') line += ' Tanpa refuel — hemat bahan bakar.';
         return line;

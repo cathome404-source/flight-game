@@ -84,6 +84,8 @@ export const TUNING = {
     checkpointPoints: 400,
     // Points for a gentle touchdown inside the zone.
     landingPoints: 500,
+    // Points for shooting down one drone pengintai (R2-11c combat).
+    dronePoints: 300,
     // Bonus points per second under the mission par time.
     timeBonusPerSecond: 10,
   },
@@ -290,6 +292,20 @@ export const WORLD = {
     { x: 650, z: 1000, y: 110, radius: 18 },
     { x: 850, z: 1120, y: 130, radius: 18 },
     { x: 950, z: 1150, y: 150, radius: 18 },
+  ],
+  // R2-11c combat — drone pengintai: slow scout drones that drift in
+  // small circles around their anchor. Chase sortie: two of them sit
+  // ~25 m above gates 2 and 4, right on the intercept line, so the
+  // pilot meets them while chasing the gates. Boss sortie: three of
+  // them inside the storm cell near boss rings 3, 5 and 7.
+  chaseDrones: [
+    { x: 450, z: 850, y: 115 },
+    { x: 850, z: 1120, y: 155 },
+  ],
+  bossDrones: [
+    { x: 600, z: -1100, y: 145 },
+    { x: -700, z: -1300, y: 115 },
+    { x: -900, z: -400, y: 95 },
   ],
   // Boss finale rings: a loop over the open sea inside the storm cell,
   // 8 rings in order. The route flows out of the takeoff heading

@@ -169,11 +169,43 @@ export function createEffects(scene, world) {
     });
   }
 
+  // --- Hit bursts (R2-11c combat): a small pool of amber spheres that
+  // expand and fade when a drone pengintai goes down. burst(pos) fires
+  // one; update() grows it. Three is plenty — drones fall one at a time.
+  const bursts = [];
+  for (let i = 0; i < 3; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffb36b,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), mat);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    if (scene) scene.add(mesh);
+    bursts.push({ mesh, life: 0 });
+  }
+  let burstNext = 0;
+
   const api = {
     inCloud: 0,
     contrailOpacity: 0,
     streakOpacity: 0,
     cloudInstances,
+
+    // Flash a burst at a world position (drone down, hit feedback).
+    burst(pos) {
+      if (!pos) return;
+      const b = bursts[burstNext];
+      burstNext = (burstNext + 1) % bursts.length;
+      b.mesh.position.set(pos.x || 0, pos.y || 0, pos.z || 0);
+      b.mesh.scale.set(1, 1, 1);
+      b.mesh.visible = true;
+      b.mesh.material.opacity = 0.9;
+      b.life = 0.5;
+    },
 
     setAircraft(ac) {
       aircraft = ac || null;
@@ -352,6 +384,21 @@ export function createEffects(scene, world) {
         streakGeo.attributes.position.needsUpdate = true;
       }
       streaks.visible = streakMat.opacity > 0.01;
+
+      // --- Hit bursts: grow to ~14 m across and fade out in 0.5 s.
+      for (const b of bursts) {
+        if (b.life <= 0) continue;
+        b.life -= dt;
+        if (b.life <= 0) {
+          b.mesh.visible = false;
+          b.mesh.material.opacity = 0;
+        } else {
+          const k = 1 - b.life / 0.5;
+          const s = 1 + k * 13;
+          b.mesh.scale.set(s, s, s);
+          b.mesh.material.opacity = 0.9 * (1 - k);
+        }
+      }
     },
   };
   return api;

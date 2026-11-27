@@ -382,6 +382,20 @@ export function createHud(document) {
     targetLine.style.fontWeight = 'bold';
   }
 
+  // ---- R2-11c — weapon line: one small line under the target line,
+  // only while a combat sortie (chase / boss) is active. Shows the
+  // fire key, ready/reloading state and drones down — nothing else,
+  // so the HUD stays clean.
+  let weaponLine = null;
+  if (doc.createElement && el.objectivePanel) {
+    weaponLine = mk('div', '', el.objectivePanel);
+    weaponLine.id = 'hud-weapon';
+    weaponLine.style.display = 'none';
+    weaponLine.style.marginTop = '2px';
+    weaponLine.style.color = '#ffd9a0';
+    weaponLine.style.fontWeight = 'bold';
+  }
+
   // ---- Day-night clock (R4-3): small "Time of day" panel next to
   // the mission timer, so the game hour is always visible. The HUD
   // panels are dark glass with light text, so it stays legible at
@@ -918,6 +932,24 @@ export function createHud(document) {
         writeStyle(targetLine, 'target-display', 'display', 'block');
       } else {
         writeStyle(targetLine, 'target-display', 'display', 'none');
+      }
+    }
+
+    // R2-11c weapon line: only in combat sorties (state.weapon is
+    // null elsewhere, so the line never shows in other sorties).
+    if (weaponLine) {
+      const w = state.weapon;
+      if (w && w.active) {
+        writeText(
+          weaponLine,
+          'weapon',
+          'Tembak [Space] — ' +
+            (w.ready ? 'siap' : 'isi ulang…') +
+            ' · Drone jatuh ' + (w.down || 0) + '/' + (w.total || 0)
+        );
+        writeStyle(weaponLine, 'weapon-display', 'display', 'block');
+      } else {
+        writeStyle(weaponLine, 'weapon-display', 'display', 'none');
       }
     }
 
