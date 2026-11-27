@@ -27,7 +27,12 @@ const PALETTE = {
   hutRoof: 0xb4552d,
   asphalt: 0x3a3d42,
   paintWhite: 0xf5f2e8,
-  paintYellow: 0xffc93c,
+  // R2-13e pass 2: one step greyer still — pass 1 (0xc2ad85) left the
+  // sunlit zone at R-G 4.8 / R-B 9.5, still faintly warm-cream in the
+  // frame. 0xb5a992 keeps a whisper of weathered-yellow warmth so the
+  // zone stays distinct from the cool apron grey, but the rendered
+  // tarmac should now sit at R-B ~5, i.e. concrete-grey.
+  paintYellow: 0xb5a992,
   ringOrange: 0xff7a1a,
   stormRed: 0xd43d2a,
   fuelGreen: 0x35d461,
