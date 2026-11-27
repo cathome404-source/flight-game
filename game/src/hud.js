@@ -708,11 +708,11 @@ export function createHud(document) {
       const row = (label, pts) =>
         pts > 0 ? '<div class="row"><span>' + label + '</span><span><b>' + pts + '</b></span></div>' : '';
       const total = (bd.rings || 0) + (bd.checkpoints || 0) + (bd.landing || 0) +
-        (bd.takeoff || 0) + (bd.timeBonus || 0);
+        (bd.takeoff || 0) + (bd.timeBonus || 0) + (bd.drones || 0);
       html += '<div class="debrief-breakdown">' +
         row('Ring', bd.rings) + row('Checkpoint', bd.checkpoints) +
         row('Pendaratan', bd.landing) + row('Lepas landas', bd.takeoff) +
-        row('Bonus waktu', bd.timeBonus) +
+        row('Drone', bd.drones) + row('Bonus waktu', bd.timeBonus) +
         '<div class="row total"><span>Total skor</span><span>' + total + '</span></div></div>';
     }
     if (typeof data.hull === 'number') {
