@@ -722,11 +722,11 @@ export function createRenderer(canvas, world) {
     shadowDir = { x: -dir.x / shadowDirLen, z: -dir.z / shadowDirLen };
     shadowStretch = Math.min(3, 1 / Math.max(0.05, Math.sin(sunEl))); // R2-12c2 cap, see init
     shadowTan = Math.max(0.05, Math.tan(sunEl));
-    // The sun-glint path on the sea fades out as night falls — and
-    // as the sun climbs: a glint path only exists for a low sun, so
-    // at midday (el 68) the additive streak nearly vanishes instead
-    // of washing the near sea white. Brighter at golden hour (0.38,
-    // was 0.26): the glitter path is the shot's money detail.
+    // R2-14g: the old additive glint streak is gone (world.glint
+    // is null now) — the water module dims its own in-shader glint
+    // with the sun intensity passed from the swell loop, so no
+    // opacity fade is needed here anymore. The guard stays so this
+    // block is a no-op rather than a crash if glint ever returns.
     if (world && world.glint && world.glint.material) {
       const glintSun = Math.max(0.08, 1 - el / 75);
       world.glint.material.opacity =
@@ -886,6 +886,19 @@ export function createRenderer(canvas, world) {
         // the specular shimmer moves with the swell.
         const seaShader = world.sea.userData.shader;
         if (seaShader) seaShader.uniforms.uTime.value = t;
+        // R2-14g: drive the water module's own uniforms (uTime +
+        // live sun direction/colour/intensity) from the same clock
+        // and the same sun the scene is lit by, so the glint and
+        // foam follow the time of day and the storm. water.update
+        // is a no-op until the shader compiles; the uTime write here
+        // duplicates the one above with the same value.
+        if (world && world.water) {
+          world.water.update(t, {
+            direction: sunDirVec,
+            color: sun.color,
+            intensity: sun.intensity,
+          });
+        }
       }
 
       // Landing light: bright low over the runway, a dim glow

@@ -6,6 +6,7 @@
 
 import { WORLD } from './config.js';
 import { terrainHeightAt } from './flight.js';
+import { initWater } from './water.js';
 
 // Warm golden-hour palette for the whole archipelago.
 const PALETTE = {
@@ -176,6 +177,20 @@ function islandHeightAt(def, lx, lz) {
   return h;
 }
 
+// R2-14g: visible-relief height at world (x, z) — the same surface
+// the terrain mesh renders (ridged + terraced, R2-14b), so grass
+// blades and trees planted on it sit on the ground you actually
+// see instead of floating over the valleys the physics cone
+// (flight.js terrainHeightAt) does not carve. 0 on open sea.
+export function reliefHeightAt(x, z) {
+  let h = 0;
+  for (const def of WORLD.islands) {
+    const v = islandHeightAt(def, x - def.x, z - def.z);
+    if (v > h) h = v;
+  }
+  return h;
+}
+
 // Colour of one terrain vertex: sand low by the beach, light then
 // deep green up the slopes, brown-grey rock on the high peaks and on
 // any steep slope (cliffs), with a few percent of noise jitter so the
@@ -321,7 +336,11 @@ function makeReliefTerrain(def) {
           // against the same base: rock/dirt 12x, sand 6x.
           float sandW = 1.0 - smoothstep(2.5, 5.5, vTerrH);
           float rockW = smoothstep(0.42, 0.72, vTerrSlope);
-          rockW = max(rockW, smoothstep(0.72, 0.88, vTerrH / max(1.0, uPeakH)) * 0.85);
+          // R2-14g: rock-by-height raised a notch (0.72->0.68 start,
+          // 0.85->0.95 weight) — R2-14b left the peaks still mostly
+          // green; bare rock should read on the high crests while
+          // the grass band below keeps its meadows.
+          rockW = max(rockW, smoothstep(0.68, 0.86, vTerrH / max(1.0, uPeakH)) * 0.95);
           float dirtW = smoothstep(0.30, 0.45, vTerrSlope) * (1.0 - smoothstep(0.45, 0.65, vTerrSlope));
           dirtW *= 0.7 * (1.0 - sandW);
           vec3 blendCol = sampledDiffuseColor.rgb;
@@ -1832,134 +1851,30 @@ export function buildWorld(rng) {
   const group = new THREE.Group();
   group.name = 'world';
 
-  // Sea: one big plane, glossy so the low sun glints on it — a
-  // brighter specular and higher shininess make the sun's path on the
-  // water read clearly at golden hour. Its colour is baked per vertex
-  // (turquoise shallow near shore, deep blue out at sea) and the
-  // material is white, so the gradient is the water colour.
-  // Segmented (60x60) so the swell animation can move its vertices
-  // smoothly — 70 units between vertices against a ~300-unit swell.
-  // A small shader patch (onBeforeCompile) adds two things the plain
-  // Phong material cannot do: a fresnel term, so the sea is dark when
-  // looked down on and bright, sky-reflecting at grazing angles near
-  // the horizon; and a fine normal ripple, so the specular sparkle
-  // shimmers instead of sitting frozen on the swell.
-  // R2-12e: shininess 55 -> 85 and a warm sun specular (0xffd9a8),
-  // so the low sun's path on the water reads as a live glittering
-  // highlight instead of a dull sheen. envMapIntensity 0.4: the
-  // scene environment was washing the sea pale mint (R2-12c showed
-  // the same wash on the aircraft); the sea keeps some sky
-  // reflection, but the vertex-colour turquoise now survives it.
-  const seaMat = phong(0xffffff, { vertexColors: true, shininess: 85, specular: 0xffd9a8, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
-  seaMat.envMapIntensity = 0.4;
-  // polygonOffset: at grazing angles the sea plane (y = 0) and the
-  // beach top (y = 2) are only ~0.2 m apart along the view ray, below
-  // the depth buffer's resolution at 1 km, so the sea showed through
-  // the beach in moire stripes. Pushing the sea's depth back lets the
-  // beach and terrain win wherever they overlap on screen.
-  seaMat.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = { value: 0 };
-    shader.uniforms.uFresnelColor = { value: new THREE.Color(0xffc98a) };
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nvarying vec3 vG3WorldPos;'
-      )
-      .replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\nvG3WorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;'
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nvarying vec3 vG3WorldPos;\nuniform float uTime;\nuniform vec3 uFresnelColor;'
-      )
-      .replace(
-        '#include <normal_fragment_begin>',
-        `#include <normal_fragment_begin>
-        // Fine ripple: two crossing sines at a much shorter wavelength
-        // than the swell, so the sun's specular breaks into sparkle.
-        // R2-12e: amplitude 0.008 -> 0.032 and frequencies raised, so
-        // the shimmer is actually visible on the near sea at chase
-        // distance (the old ripple was too faint to read in a still).
-        // Still faded out with distance: a stronger, high-frequency
-        // ripple aliased into stiff parallel stripes (moire) on the
-        // far sea and sand in the cover shot.
-        float rippleFade = 1.0 - smoothstep(120.0, 450.0, length(vViewPosition));
-        normal = normalize(normal + rippleFade * vec3(
-          sin(vG3WorldPos.x * 0.11 + uTime * 1.3) * 0.032 +
-          sin(vG3WorldPos.z * 0.09 - uTime * 1.1) * 0.028,
-          sin(vG3WorldPos.x * 0.075 - uTime * 0.8) * 0.028,
-          cos(vG3WorldPos.z * 0.10 + uTime * 1.5) * 0.032
-        ));`
-      )
-      .replace(
-        '#include <output_fragment>',
-        `#include <output_fragment>
-        // Fresnel: only at true grazing angles (right at the horizon)
-        // does the water turn toward the warm sky colour; seen from
-        // above it stays deep. pow 4 (was 5) widens the bright band a
-        // little, so the sun's path on the water reads as a broad soft
-        // glow instead of a thin sharp line. R2-12e: mix 0.25 -> 0.35,
-        // so the horizon sea carries the golden-hour warmth instead
-        // of reading flat pale mint. Faded out with distance:
-        // past ~1 km the swell normals + fresnel compressed into dense
-        // parallel stripes at the horizon, so the far sea keeps only a
-        // whisper of the warm tint instead of banding.
-        {
-          float fresDist = 1.0 - smoothstep(900.0, 2200.0, length(vViewPosition));
-          float fres = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 4.0);
-          gl_FragColor.rgb = mix(gl_FragColor.rgb, uFresnelColor, fres * 0.35 * fresDist);
-        }`
-      );
-    sea.userData.shader = shader;
-  };
-  const sea = new THREE.Mesh(
-    new THREE.PlaneGeometry(WORLD.seaSize, WORLD.seaSize, 60, 60),
-    seaMat
-  );
-  sea.rotation.x = -Math.PI / 2;
-  sea.position.y = 0;
-  // The sea catches the plane's and islands' shadows.
-  sea.receiveShadow = true;
-  // Depth gradient baked per vertex: turquoise shallow water near
-  // every shore, fading to deep blue out at sea. Computed from the
-  // nearest island rim (world x = local x, world z = -local y after
-  // the mesh's -90 deg rotation), so the turquoise ring hugs each
-  // beach instead of sitting at one fixed radius.
-  {
-    const pos = sea.geometry.attributes.position;
-    const cols = new Float32Array(pos.count * 3);
-    const shallow = new THREE.Color(PALETTE.seaShallow);
-    const deep = new THREE.Color(PALETTE.seaDeep);
-    const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) {
-      const wx = pos.getX(i);
-      const wz = -pos.getY(i);
-      let shore = Infinity;
-      for (const isl of WORLD.islands) {
-        const d = Math.hypot(wx - isl.x, wz - isl.z) - isl.radius;
-        if (d < shore) shore = d;
-      }
-      const t = Math.min(1, Math.max(0, (shore - 40) / 340));
-      c.copy(shallow).lerp(deep, t * t * (3 - 2 * t));
-      cols[i * 3] = c.r;
-      cols[i * 3 + 1] = c.g;
-      cols[i * 3 + 2] = c.b;
-    }
-    sea.geometry.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-  }
-  // Flat copy of the rest positions: the swell writes heights from these.
-  sea.userData.basePositions = sea.geometry.attributes.position.array.slice();
-  group.add(sea);
+  // Sea (R2-14g): the realistic water module — see the note at the
+  // initWater call below. The R2-12e Phong-sea notes are history:
+  // the old sea's shininess/specular/fresnel/ripple patch and its
+  // baked vertex-colour gradient are all inside water.js now.
+  // R2-14g: the sea is now the realistic water module (water.js,
+  // initWater) — normal-mapped waves, a sun glint drawn in-shader,
+  // shoreline foam, env reflection and a deep/shallow gradient that
+  // stays alive in a still frame. Same size (WORLD.seaSize, 4200 m)
+  // and y = 0 as the old sea, and the same userData contract
+  // (basePositions + shader.uTime) so the swell loop in render.js
+  // keeps driving it with zero changes. The old Phong sea is gone,
+  // and so is makeGlintStreak() below: the module draws its own sun
+  // path, and keeping the streak would double the highlight.
+  // initWater takes a scene but only calls .add on it, so the world
+  // group works as the parent here; the group joins the real scene
+  // in createRenderer. No envMap is passed: the standard material
+  // follows scene.environment on its own (envmap.js).
+  const water = initWater(group, {});
+  const sea = water.mesh;
 
-  // Sun-glint streak: a long additive band on the water along the sun's
-  // azimuth, from the western horizon across the flight line — the path
-  // of sunlight on the sea at golden hour. The gradient texture fades
-  // the streak out at both ends and both edges, and it sits just above
-  // the swell peaks so the waves never swallow it.
-  const glint = makeGlintStreak();
-  group.add(glint);
+  // R2-14g: makeGlintStreak() removed — water.js draws the sun path
+  // itself (see the sea note above); the old additive streak would
+  // double the highlight. The foam rings below stay: they sit above
+  // the water surface and complement the in-shader foam.
 
   // No separate deep-water disc under the sea: a disc 0.4 m below the
   // sea plane z-fought with it at grazing angles (the cover shot's
@@ -2139,7 +2054,11 @@ function shadowify(group) {
     cloudClusters: cloudSet.clusters,
     cloudBlobs: cloudSet.blobs,
     sea,
-    glint,
+    water,
+    // R2-14g: the old additive glint streak is gone (water.js draws
+    // its own sun path). Kept as null so render.js's guarded
+    // world.glint check stays a no-op.
+    glint: null,
     mist,
     lighthouseBeam: lighthouse ? lighthouse.beamPivot : null,
     // R4-3: runway edge lights carry the runway at night — brighter

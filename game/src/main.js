@@ -10,7 +10,9 @@ import { createCampaign, missionIndexForSortie, selectedAircraftId } from './cam
 import { createHangar } from './hangar.js';
 import { createRandom } from './random.js';
 import { createInput } from './input.js';
-import { buildWorld } from './world.js';
+import { buildWorld, reliefHeightAt } from './world.js';
+import { initGrass } from './grass.js';
+import { initTrees } from './trees.js';
 import { makeAircraft } from './aircraft.js';
 import { createFlight } from './flight.js';
 import { createMissions } from './missions.js';
@@ -61,6 +63,18 @@ const audio = createAudio();
 const render = createRenderer(canvas, world);
 render.scene.add(aircraft.group);
 render.setAircraft(aircraft);
+
+// R2-14g: wire the R2-14 vegetation modules. Both plant on the
+// VISIBLE relief surface (world.js reliefHeightAt — ridged +
+// terraced, R2-14b), not the smooth physics cone, so blades and
+// trees sit on the ground the camera actually sees. Grass sways
+// via grass.update(dt) in the frame loop below; trees are static.
+const grass = initGrass(render.scene, { heightAt: reliefHeightAt });
+const trees = initTrees(render.scene, {
+  islands: WORLD.islands,
+  heightAt: reliefHeightAt,
+  runway: WORLD.runway,
+});
 
 // R2-11c combat: Space fires a tracer at drone pengintai in sorties
 // 6 (chase) and 12 (boss). A drone takes 2 hits; dropping one scores
@@ -849,6 +863,10 @@ function frame(now) {
   }
 
   render.update(dt, flight.state);
+
+  // R2-14g: advance the grass wind sway (no-op safe if the module
+  // is ever skipped — the blades simply stand still).
+  if (grass && typeof grass.update === 'function') grass.update(dt);
 
   if (state.screen === 'playing') {
     hud.update(combinedHudState());
