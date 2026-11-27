@@ -104,7 +104,12 @@ export function makeAircraft(id) {
     roughness: 0.12, metalness: 0.15, flatShading: true,
     transparent: true, opacity: 0.88,
   });
+  // R2-11a — cockpit glass state: false = dark faceted bubble (chase
+  // view), true = near-invisible glass (cockpit view). Toggled in
+  // update() when plane.cockpit changes; the material swap needs one
+  // recompile (needsUpdate) per switch, never per frame.
   const panelDark = standard(0x3a2e22, { roughness: 0.85, metalness: 0.1 });
+  let glassCockpit = false;
 
   const fusFront = -sh.fusLen / 2;
   const fusBack = sh.fusLen / 2;
@@ -466,6 +471,32 @@ export function makeAircraft(id) {
       for (const b of blades) b.visible = showProp;
       for (const t of tips) t.visible = showProp;
       bladeMat.opacity = Math.max(0.12, 1.15 - plane.throttle * 2.2);
+
+      // R2-11a — cockpit glass: from the pilot's eye the canopy bubble
+      // sits right ahead, and the dark faceted glass (opacity 0.88)
+      // reads as a grey slab dominating the centre of the frame. In
+      // cockpit view the same bubble becomes near-invisible glass —
+      // faint sky tint, smooth shading, no facets — so the ring and
+      // the terrain ahead stay clear; the frame torus and the two
+      // crossbars still outline the canopy. Chase view restores the
+      // dark faceted bubble untouched.
+      if (plane.cockpit !== glassCockpit) {
+        glassCockpit = plane.cockpit;
+        if (glassCockpit) {
+          glass.color.setHex(0x9fc8e8);
+          glass.opacity = 0.10;
+          glass.roughness = 0.06;
+          glass.metalness = 0;
+          glass.flatShading = false;
+        } else {
+          glass.color.setHex(0x1c2f42);
+          glass.opacity = 0.88;
+          glass.roughness = 0.12;
+          glass.metalness = 0.15;
+          glass.flatShading = true;
+        }
+        glass.needsUpdate = true;
+      }
 
       const roll = input.roll || 0;
       const pitch = input.pitch || 0;
