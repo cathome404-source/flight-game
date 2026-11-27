@@ -1407,6 +1407,16 @@ function buildLayeredClouds(rng) {
     });
   }
 
+  // R2-15b: the x=340 cumulus cluster sat dead-centre above the compass
+  // in the cockpit shot (its 45 puffs projected to screen x 585-815,
+  // y 96-280, halo included) — shift this ONE cluster 130 m north, off
+  // the view axis, so the clump clears the compass. Verified in the
+  // re-shoot: the mass now sits in open sky at screen x ~365-590,
+  // y ~135-290, clear of the compass, the objective panel and the
+  // Ring 1 marker; the rng stream is untouched, so every other cluster
+  // and puff keeps its seeded place.
+  lineClusters.find((c) => c.layer === 'cumulus' && c.x === 340).z -= 130;
+
   const layerDefs = [
     { key: 'cirrus', yMin: 300, yMax: 380, count: 80, rMin: 14, rMax: 26, flat: 0.3, color: 0xeef2fb, opacity: 0.72, driftMin: 1.5, driftMax: 3.0 },
     { key: 'cumulus', yMin: 150, yMax: 230, count: 140, rMin: 16, rMax: 30, flat: 0.8, color: 0xfbf4e8, opacity: 0.92, driftMin: 1.2, driftMax: 2.6 },
