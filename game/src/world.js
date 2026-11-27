@@ -923,8 +923,8 @@ function makeFuelRing(def) {
 }
 
 // Three cloud layers as InstancedMesh: high thin bright cirrus, thick
-// warm cumulus in the middle, warm shaded low cloud. Every cloud is
-// warm white / cream — no purple anywhere — with a denser core puff
+// pale cumulus in the middle, shaded low cloud. Every cloud is near-
+// white / pale cream — barely warm, no yellow — with a denser core puff
 // wrapped in a larger, fainter halo puff, so the edge melts into the
 // sky instead of ending in a hard faceted shell. Puffs cluster
 // along the ring flight line (z = 330) so the cover/cockpit/rings shots
@@ -932,17 +932,19 @@ function makeFuelRing(def) {
 // shadow blobs on the sea under the flight-line clusters anchor the
 // clouds to the world instead of floating decals.
 function buildLayeredClouds(rng) {
-  // Soft puff geometry: a subdivided icosahedron (detail 1, smaller
-  // facets than detail 0) with a baked vertical gradient — warm bright
-  // on top, warm shaded underneath — so every puff reads as a lit
-  // cloud, never a faceted rock. The gradient is per-vertex, so the
+  // Soft puff geometry: a subdivided icosahedron (detail 1) with a
+  // baked vertical gradient — bright white on top, pale warm grey
+  // underneath — so every puff reads as a lit cloud. R2-12d: smooth
+  // shading (r149 averages the icosahedron normals, verified in the
+  // vendored three) — flatShading was what cut every puff into
+  // visible yellow facets. The gradient is per-vertex, so the
   // sun-side shading comes from the geometry, not the layer tint.
   const geo = new THREE.IcosahedronGeometry(1, 1);
   {
     const pos = geo.attributes.position;
     const cols = new Float32Array(pos.count * 3);
-    const top = new THREE.Color(0xfff8ea);
-    const bottom = new THREE.Color(0xd9b48a);
+    const top = new THREE.Color(0xffffff);
+    const bottom = new THREE.Color(0xe4d8c2);
     const c = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const t = Math.pow((pos.getY(i) + 1) / 2, 0.7);
@@ -983,27 +985,29 @@ function buildLayeredClouds(rng) {
   }
 
   const layerDefs = [
-    { key: 'cirrus', yMin: 300, yMax: 380, count: 80, rMin: 14, rMax: 26, flat: 0.3, color: 0xffe6bf, opacity: 0.8, driftMin: 1.5, driftMax: 3.0 },
-    { key: 'cumulus', yMin: 150, yMax: 230, count: 140, rMin: 16, rMax: 30, flat: 0.8, color: 0xfff3e0, opacity: 0.92, driftMin: 1.2, driftMax: 2.6 },
-    { key: 'low', yMin: 80, yMax: 130, count: 70, rMin: 12, rMax: 22, flat: 0.75, color: 0xf2dcae, opacity: 0.95, driftMin: 1.8, driftMax: 3.2 },
+    { key: 'cirrus', yMin: 300, yMax: 380, count: 80, rMin: 14, rMax: 26, flat: 0.3, color: 0xeef2fb, opacity: 0.72, driftMin: 1.5, driftMax: 3.0 },
+    { key: 'cumulus', yMin: 150, yMax: 230, count: 140, rMin: 16, rMax: 30, flat: 0.8, color: 0xfbf4e8, opacity: 0.92, driftMin: 1.2, driftMax: 2.6 },
+    { key: 'low', yMin: 80, yMax: 130, count: 70, rMin: 12, rMax: 22, flat: 0.75, color: 0xefe3d0, opacity: 0.95, driftMin: 1.8, driftMax: 3.2 },
   ];
 
   // H5: every puff is a cluster of 3 balls (core + 2 smaller caps
   // stacked on top, varied sizes) instead of one flattened disc, so
   // clouds read as round cumulus, not beige plates. The halo shell
-  // follows the same tripled instances.
+  // follows the same tripled instances. R2-12d: caps sit lower
+  // (0.30/0.26, was 0.38/0.32) so clustered puffs stop piling into
+  // tall yellow towers in the cockpit frame.
   const SUBS = 3;
   const SUB_OFF = [
     [0, 0, 0, 1.0],
-    [-0.55, 0.38, 0.15, 0.62],
-    [0.5, 0.32, -0.2, 0.48],
+    [-0.55, 0.30, 0.15, 0.62],
+    [0.5, 0.26, -0.2, 0.48],
   ];
 
   const layers = {};
   for (const def of layerDefs) {
     const total = def.count * SUBS;
     const mat = lambert(def.color, {
-      flatShading: true,
+      flatShading: false,
       vertexColors: true,
       transparent: true,
       opacity: def.opacity,
@@ -1061,19 +1065,22 @@ function buildLayeredClouds(rng) {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     layers[def.key] = mesh;
 
-    // Halo shell: the same balls blown up ~1.5x and much fainter, so
-    // each cloud has a dense warm core and a soft transparent edge.
+    // Halo shell: the same balls blown up ~1.35x and much fainter, so
+    // each cloud has a dense core and a soft transparent edge that
+    // melts into the sky. R2-12d pass 2: the 1.7x halo read as a
+    // separate giant disc around near-camera puffs (cover shot) —
+    // the halo must be nearly invisible, only softening the edge.
     const haloScale = new Float32Array(total * 3);
     for (let i = 0; i < total; i++) {
-      haloScale[i * 3] = scale[i * 3] * 1.5;
-      haloScale[i * 3 + 1] = scale[i * 3 + 1] * 1.5;
-      haloScale[i * 3 + 2] = scale[i * 3 + 2] * 1.5;
+      haloScale[i * 3] = scale[i * 3] * 1.35;
+      haloScale[i * 3 + 1] = scale[i * 3 + 1] * 1.35;
+      haloScale[i * 3 + 2] = scale[i * 3 + 2] * 1.35;
     }
     const haloMat = lambert(def.color, {
-      flatShading: true,
+      flatShading: false,
       vertexColors: true,
       transparent: true,
-      opacity: def.opacity * 0.38,
+      opacity: def.opacity * 0.22,
     });
     const halo = new THREE.InstancedMesh(geo, haloMat, total);
     halo.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

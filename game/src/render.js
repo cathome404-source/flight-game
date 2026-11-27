@@ -46,6 +46,10 @@ function sunDirection(azimuth, elevation) {
 // Repaint the sky dome's vertex colours for a horizon/zenith pair
 // (same gradient formula makeSkyDome bakes at load, so a time change
 // repaints the dome instead of rebuilding it).
+// R2-12d: three-stop gradient — a saturation-lifted mid-sky stop
+// between horizon and zenith, so the sky reads as a banded sunset
+// (orange -> rose -> violet) instead of washing through grey-pink
+// in the middle, and as rich azure by day instead of pale blue.
 function paintSkyDome(dome, horizonHex, zenithHex) {
   if (!dome) return;
   const geo = dome.geometry;
@@ -53,6 +57,8 @@ function paintSkyDome(dome, horizonHex, zenithHex) {
   const zenith = new THREE.Color(zenithHex);
   const below = new THREE.Color(0x8a5a3a);
   const haze = new THREE.Color(0xffd9a8);
+  const mid = new THREE.Color(horizonHex).lerp(zenith, 0.5);
+  mid.offsetHSL(0, 0.18, 0);
   // At night the warm haze band would glow against a dark sky, so it
   // fades out with the horizon's own darkness (dark horizon = no haze).
   const hazeAmt = 0.35 * Math.min(1, (horizon.r + horizon.g + horizon.b) / 1.2);
@@ -62,7 +68,9 @@ function paintSkyDome(dome, horizonHex, zenithHex) {
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i) / 3600;
     if (y >= 0) {
-      tmp.copy(horizon).lerp(zenith, Math.pow(y, 0.6));
+      const t = Math.pow(y, 0.55);
+      if (t < 0.5) tmp.copy(horizon).lerp(mid, t * 2);
+      else tmp.copy(mid).lerp(zenith, (t - 0.5) * 2);
       tmp.lerp(haze, (1 - Math.min(1, y * 8)) * hazeAmt);
     } else {
       tmp.copy(horizon).lerp(below, Math.min(1, -y * 3));
@@ -127,6 +135,8 @@ function makeGlowTexture() {
 
 // Sky dome: a big backside sphere whose vertex colours blend from the
 // warm horizon to the deep zenith, so the sky reads as a gradient.
+// (R2-12d: same three-stop formula as paintSkyDome — a saturation-
+// lifted mid-sky stop keeps the load-time bake identical to repaints.)
 function makeSkyDome() {
   const geo = new THREE.SphereGeometry(3600, 28, 18);
   const horizon = new THREE.Color(WORLD.sky.horizon);
@@ -136,13 +146,17 @@ function makeSkyDome() {
   // the same haze the fog uses, so the horizon melts instead of
   // cutting hard — the far islands read pale and far away.
   const haze = new THREE.Color(0xffd9a8);
+  const mid = new THREE.Color(WORLD.sky.horizon).lerp(zenith, 0.5);
+  mid.offsetHSL(0, 0.18, 0);
   const pos = geo.attributes.position;
   const colours = new Float32Array(pos.count * 3);
   const tmp = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i) / 3600;
     if (y >= 0) {
-      tmp.copy(horizon).lerp(zenith, Math.pow(y, 0.6));
+      const t = Math.pow(y, 0.55);
+      if (t < 0.5) tmp.copy(horizon).lerp(mid, t * 2);
+      else tmp.copy(mid).lerp(zenith, (t - 0.5) * 2);
       tmp.lerp(haze, (1 - Math.min(1, y * 8)) * 0.35);
     } else {
       tmp.copy(horizon).lerp(below, Math.min(1, -y * 3));
@@ -582,8 +596,8 @@ export function createRenderer(canvas, world) {
     // grade on top of them.
     const duskW = Math.exp(-Math.pow((h - 19) / 1.7, 2)) * (1 - nightFactor) * (1 - storm * 0.85);
     if (duskW > 0.01) {
-      horizon.lerp(new THREE.Color(0xff5e14), duskW * 0.55);
-      zenith.lerp(new THREE.Color(0x3a1e6e), duskW * 0.55);
+      horizon.lerp(new THREE.Color(0xff5e14), duskW * 0.6);
+      zenith.lerp(new THREE.Color(0x2c1558), duskW * 0.6);
       sunCol.lerp(new THREE.Color(0xff6a1a), duskW * 0.4);
     }
     if (storm > 0.01) {
@@ -672,7 +686,7 @@ export function createRenderer(canvas, world) {
       );
       g.material.opacity = (0.28 - i * 0.1) * (1 - nightFactor * 0.85) * shotGlare;
     }
-    stars.material.opacity = nightFactor * 0.9;
+    stars.material.opacity = nightFactor;
     // Blob-shadow geometry follows the new sun elevation/azimuth.
     sunEl = el * DEG;
     sunFlat = dir;
