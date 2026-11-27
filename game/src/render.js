@@ -561,7 +561,11 @@ export function createRenderer(canvas, world) {
     sunDirVec.set(dir.x, dir.y, dir.z);
     sun.position.set(dir.x * 900, dir.y * 900, dir.z * 900);
     sun.color.copy(sunCol);
-    sun.intensity = num('sunIntensity');
+    // R2-12c: moonlight boost — at night the sun keyframe is the
+    // moon (0.30–0.32), too weak for the shadow map to read; +25%
+    // at full night lifts moonlit shadows without touching the day
+    // exposure (nightFactor 0 = no-op by day).
+    sun.intensity = num('sunIntensity') * (1 + nightFactor * 0.25);
     // R2-4 — storm grade: the boss storm darkens the whole sky on
     // top of the day-night keyframes (slate horizon/zenith, dimmer
     // sun, lower exposure, weaker glow), so the arena reads as a
@@ -620,11 +624,20 @@ export function createRenderer(canvas, world) {
     sun.intensity *= 1 - storm * 0.55;
     hemi.color.copy(zenith);
     hemi.groundColor.copy(lerpHex(0xe8cf9a, 0x1a2436, nightFactor));
+    // R2-12c: daylight fill cut — the sun (1.9) is the look's
+    // contrast; the hemisphere + ambient fill was lifting every
+    // shadowed face toward flat cream (measured: killing the fill
+    // barely moves the near-ring pixel, but it deepens the aircraft's
+    // shaded side and the terrain relief's shadow side, so the sun
+    // reads stronger without touching its intensity or the ACES
+    // shoulder). Scale 0.72 by day, easing back to 1.0 at full night
+    // so night stays readable instead of crushed.
+    const fillScale = 0.72 + 0.28 * nightFactor;
     // R2-11g: dim the fill with the storm — the sun dim alone left
     // terrain, clouds and the plane bright in the boss frame.
-    hemi.intensity = num('hemi') * (1 - storm * 0.45);
+    hemi.intensity = num('hemi') * (1 - storm * 0.45) * fillScale;
     ambient.color.copy(lerpHex(0xffe0b3, 0x8fb0ff, nightFactor));
-    ambient.intensity = num('ambient') * (1 - storm * 0.45);
+    ambient.intensity = num('ambient') * (1 - storm * 0.45) * fillScale;
     scene.fog.color.copy(horizon);
     // Layered depth: at dusk the haze closes in (nearer far plane),
     // so far islands melt into the orange haze while the foreground
@@ -961,9 +974,14 @@ export function createRenderer(canvas, world) {
         blobShadowHolder.position.set(shadowX, shadowGroundY + 1.2, shadowZ);
         const blobR = 4.2 + agl * 0.05;
         blobShadow.scale.set(blobR * shadowStretch, blobR, 1);
-        // 0.30 (was 0.42): the real shadow map now follows the plane
-        // too, so the blob is a softener, not the whole shadow.
-        blobShadow.material.opacity = 0.30 * blobFade;
+        // 0.38 (was 0.30): the real shadow map follows the plane, but
+        // at golden hour it lands agl/tan(el) ~485 m ahead of the
+        // plane — off the chase frame — so the blob is the shadow the
+        // camera actually shows under the plane. The R2-12c fill cut
+        // deepened the shaded side everywhere else; the blob has to
+        // keep up or the plane floats. Still below the old 0.42, so
+        // it stays a softener, not a decal.
+        blobShadow.material.opacity = 0.38 * blobFade;
       }
 
       // Flight effects (cloud drift, in-cloud fog, contrails, wind
