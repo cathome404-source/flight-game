@@ -252,6 +252,64 @@ export function createHangar(opts) {
   const api = {
     element: root,
     refresh,
+    // Shot-only compact layout (?shot=hangar): the dossier frame is
+    // 800 px tall and the full panel is ~1700 px, so for the
+    // screenshot the panel compresses — cards in one row with the
+    // stat bars hidden (the numbers survive in the stats line below
+    // them), notes and the close button hidden, map shrunk — until
+    // refit shop + station ledger + dispatch map + medals all fit in
+    // one frame with no scrolling. Normal play never calls this and
+    // keeps the full layout; it only restyles this screen's DOM.
+    compactForShot() {
+      refresh();
+      const panel = root.querySelector('.hangar-panel');
+      if (panel) {
+        panel.style.padding = '12px 18px';
+        panel.scrollTop = 0;
+      }
+      const h2 = root.querySelector('.hangar-panel h2');
+      if (h2) { h2.style.fontSize = '28px'; h2.style.marginBottom = '4px'; }
+      if (cardsEl) {
+        cardsEl.style.display = 'flex';
+        cardsEl.style.gap = '8px';
+        for (const card of cardsEl.children) {
+          card.style.flex = '1';
+          card.style.minWidth = '0';
+          card.style.padding = '6px 10px';
+          card.style.margin = '0';
+        }
+      }
+      for (const row of root.querySelectorAll('.hangar-card .stat-row')) {
+        row.style.display = 'none';
+      }
+      for (const name of root.querySelectorAll('.hangar-card .hangar-name')) {
+        name.style.fontSize = '16px';
+      }
+      for (const role of root.querySelectorAll('.hangar-card .hangar-role')) {
+        role.style.fontSize = '12px';
+        role.style.margin = '2px 0 0';
+      }
+      if (statsEl) statsEl.style.fontSize = '13px';
+      for (const h of root.querySelectorAll('.hangar-panel h3')) {
+        h.style.margin = '8px 0 6px';
+        h.style.fontSize = '15px';
+      }
+      for (const row of root.querySelectorAll('.refit-row')) {
+        row.style.padding = '5px 8px';
+        row.style.margin = '4px 0';
+      }
+      for (const note of root.querySelectorAll('.refit-note')) {
+        note.style.display = 'none';
+      }
+      for (const row of root.querySelectorAll('.ledger-row')) {
+        row.style.margin = '4px 0';
+      }
+      const map = root.querySelector('.dispatch-map');
+      if (map) { map.style.width = '48%'; }
+      if (medalsEl) medalsEl.style.marginTop = '6px';
+      const closeBtn = doc.getElementById('btn-hangar-close');
+      if (closeBtn) closeBtn.style.display = 'none';
+    },
     show() {
       refresh();
       root.classList.add('on');

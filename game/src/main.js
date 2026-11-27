@@ -664,17 +664,28 @@ if (shots.shotName === 'hangar') {
   hud.setScreen('menu');
   hud.setCockpit(false);
   openHangar();
-  // R2-10: snap the menu camera to the parked plane (without this
-  // the chase camera glides in from (-40,30,360) and the shot can
-  // catch it still far down the runway — the old shot's tiny plane)
-  // and scroll the panel so the ledger + dispatch map + medals are
-  // in frame instead of buried below the fold.
+  // R2-11b: panel to the RIGHT (the .screen column flex was dropping
+  // it on the left, so justify-content never pushed it right), orbit
+  // the chase camera ~22 deg so the parked plane reads as a big 3/4
+  // rear view centred in the open left half instead of a small
+  // tail-on speck at the panel edge, and compact the panel so the
+  // refit shop + ledger + dispatch map + medals all fit one frame.
+  // Shot-only: normal hangar play keeps its own layout and camera.
+  const hangarScreen = document.getElementById('screen-hangar');
+  if (hangarScreen) hangarScreen.style.flexDirection = 'row';
   render.snap();
-  // (R2-10b: the yaw-orbit try put the parked plane side-on but
-  // half-hidden behind the panel edge and reading as debris —
-  // reverted to the tail-on chase view, which reads as a plane.)
+  // addLook(dx, dy): lookYaw -= dx * 0.25 deg, so dx -88 orbits the
+  // camera +22 deg around the plane and swings the plane left in
+  // frame, into the open half; dy +30 tips the camera up a touch so
+  // the plane sits higher in the frame. (Try 1 used +35 deg: the
+  // tail filled the frame, the nose slid behind the panel and the
+  // tail fin cropped at the left edge — the parked plane is too long
+  // for the 700 px open half at that angle. +22 deg foreshortens the
+  // fuselage so the whole plane fits.)
+  if (render && typeof render.addLook === 'function') render.addLook(-88, 30);
+  if (hangar && typeof hangar.compactForShot === 'function') hangar.compactForShot();
   const hp = document.querySelector('.hangar-panel');
-  if (hp) hp.scrollTop = Math.max(0, (hp.scrollHeight - hp.clientHeight) * 0.78);
+  if (hp) hp.scrollTop = 0;
 } else if (shots.shotName) {
   state.shot = shots.shotName;
   state.posed = true;
