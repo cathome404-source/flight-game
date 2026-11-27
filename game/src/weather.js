@@ -523,7 +523,20 @@ export function createWeather(scene) {
       const along = shotHold
         ? 110 + rng() * 90
         : 250 + rng() * 350;
-      const lat = (rng() - 0.5) * (shotHold ? 180 : 500);
+      // R2-15c: shot-hold strike is biased screen-RIGHT (lat +10..+55 m,
+      // mean +32) instead of centred (±90 m). The old centred draw put
+      // the channel's halo right on the objective panel's right edge
+      // (core x~374 at y=240 vs panel edge x~355, halo touching it) in
+      // the dossier shot, and a second fresh draw sat at x~365 — the
+      // bolt slightly crossed the objective text area. A rightward bias
+      // moves the channel ~+60 px at panel height, clearing the panel
+      // with margin. Pass 1 (+10..+80) cleared the panel in 3/3 draws
+      // but its upper tail ran too far right: one draw struck the
+      // THROTTLE "70%" text, so the range is capped at +55 m. Normal
+      // play keeps the centred ±250 m spread.
+      const lat = shotHold
+        ? 10 + rng() * 45
+        : (rng() - 0.5) * 500;
       // Right vector for a forward (fx, fz) in xz: (-fz, fx).
       sx = lastPos.x + lastForward.x * along + -lastForward.z * lat;
       sz = lastPos.z + lastForward.z * along + lastForward.x * lat;
