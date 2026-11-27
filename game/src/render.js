@@ -427,6 +427,14 @@ export function createRenderer(canvas, world) {
   // whole plane fit the open half. Set by the hangar-shot branch in
   // main.js; normal play never touches it.
   let shotChaseScale = 1;
+  // R2-15a: shot-only chase look-ahead + eye height (defaults = normal
+  // play). The hangar shot's lookAt target sits 16 m ahead of the
+  // parked plane, so at a wide orbit the target swings the plane off
+  // the left edge; a shorter look-ahead keeps it centred. A taller eye
+  // reads the wing as a planform instead of a sliver. Set by the
+  // hangar-shot branch in main.js; normal play never touches either.
+  let shotLookAhead = 16;
+  let shotChaseHeight = 1;
   // True until the first frame (or after snap()): the camera jumps
   // straight to the active view instead of gliding across the map.
   // Headless screenshots only render a handful of frames, so without
@@ -483,7 +491,7 @@ export function createRenderer(canvas, world) {
     // height, so the plane fills more of the frame and the horizon
     // sits lower, with the mountains and sky looming above it.
     tmpEye.copy(state.position).addScaledVector(back, camCfg.chaseDistance * 0.8 * shotChaseScale);
-    tmpEye.y += camCfg.chaseHeight * 0.7;
+    tmpEye.y += camCfg.chaseHeight * 0.7 * shotChaseHeight;
     if (snapNext) {
       chaseEye.copy(tmpEye);
     } else {
@@ -493,7 +501,7 @@ export function createRenderer(canvas, world) {
     forwardOf(state, tmpForward);
     tmpTarget
       .copy(state.position)
-      .addScaledVector(tmpForward, 16);
+      .addScaledVector(tmpForward, shotLookAhead);
     // H3 — aim a touch above the nose: the horizon drops in the frame
     // and the sky, clouds and mountains take the upper half.
     tmpTarget.y += 3.2;
@@ -763,6 +771,16 @@ export function createRenderer(canvas, world) {
     // (1 = normal). Hangar-shot only; normal play never calls it.
     setShotChaseScale(s) {
       shotChaseScale = clamp(typeof s === 'number' ? s : 1, 1, 3);
+    },
+    // R2-15a: shorten the chase look-ahead for a posed shot
+    // (16 = normal). Hangar-shot only; normal play never calls it.
+    setShotLookAhead(m) {
+      shotLookAhead = clamp(typeof m === 'number' ? m : 16, 2, 16);
+    },
+    // R2-15a: raise the chase eye for a posed shot (1 = normal).
+    // Hangar-shot only; normal play never calls it.
+    setShotChaseHeight(s) {
+      shotChaseHeight = clamp(typeof s === 'number' ? s : 1, 1, 3);
     },
     // Day-night cycle: pin or read the game clock (hours, 0..24)
     // and how night it is (0 = day, 1 = full night).

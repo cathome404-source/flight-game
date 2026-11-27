@@ -737,8 +737,13 @@ if (shots.shotName === 'hangar') {
   // the side-on view already pulls the yellow cast toward neutral
   // grey; the remaining pale-cream extent is the paint itself,
   // which is gameplay and stays.
-  if (render && typeof render.setShotChaseScale === 'function') render.setShotChaseScale(1.75);
-  if (render && typeof render.addLook === 'function') render.addLook(-220, 0);
+  // R2-15a pass 3 (final candidate): split try 1/try 2 — eye 1.8x +
+  // dy +30 keeps the hangar walls in frame while the fin shrinks
+  // back toward try 1 and the wing keeps ~22 deg elevation.
+  if (render && typeof render.setShotChaseScale === 'function') render.setShotChaseScale(1.65);
+  if (render && typeof render.setShotLookAhead === 'function') render.setShotLookAhead(6);
+  if (render && typeof render.setShotChaseHeight === 'function') render.setShotChaseHeight(1.8);
+  if (render && typeof render.addLook === 'function') render.addLook(-280, 30);
   if (hangar && typeof hangar.compactForShot === 'function') hangar.compactForShot();
   const hp = document.querySelector('.hangar-panel');
   if (hp) hp.scrollTop = 0;
