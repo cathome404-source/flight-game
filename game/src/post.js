@@ -18,11 +18,13 @@ const POST_VERTEX = [
 // One fragment shader does the whole stack, in order:
 //  1. fake bloom: a 4-tap diagonal blur of the bright pass only, added
 //     back over the image, so the sun, nav lights and sea glint glow;
+//     luminance-gated and warm-tinted, so gold rings glow gold instead
+//     of blowing out to white;
 //  2. warm golden-hour grade: a gentle orange tint plus a soft
 //     S-curve that deepens the shadows and lifts the highlights;
 //  3. vignette: the edges darken, pulling the eye to the plane;
 //  4. sRGB encode (the scene is rendered linear into the target);
-//  5. film grain: a hash-based flicker, kept very thin (0.018) so the
+//  5. film grain: a hash-based flicker, kept very thin (0.012) so the
 //     screenshot stays sharp and the facets stay readable.
 const POST_FRAGMENT = [
   'uniform sampler2D tDiffuse;',
@@ -39,6 +41,11 @@ const POST_FRAGMENT = [
   '  vec3 col = texture2D(tDiffuse, uv).rgb;',
   '',
   '  // --- Fake bloom: blur the bright parts, add them back. ---',
+  '  // Luminance-gated (smoothstep 0.72-0.95) instead of a per-channel',
+  '  // cut: a gold ring is bright in red/green but dim in blue, so the',
+  '  // old per-channel threshold let its hot channels bloom white. The',
+  '  // add is the blurred colour itself, warm-tinted, at low strength,',
+  '  // so the sun and sea glint still glow while gold stays gold.',
   '  vec2 texel = 2.0 / uResolution;',
   '  vec3 blur = vec3(0.0);',
   '  blur += texture2D(tDiffuse, uv + texel * vec2( 1.0,  1.0)).rgb;',
@@ -46,22 +53,28 @@ const POST_FRAGMENT = [
   '  blur += texture2D(tDiffuse, uv + texel * vec2( 1.0, -1.0)).rgb;',
   '  blur += texture2D(tDiffuse, uv + texel * vec2(-1.0, -1.0)).rgb;',
   '  blur *= 0.25;',
-  '  vec3 bright = max(blur - vec3(0.60), vec3(0.0)) / 0.40;',
-  '  col += bright * 0.60;',
+  '  float lum = dot(blur, vec3(0.299, 0.587, 0.114));',
+  '  float bloomAmt = smoothstep(0.72, 0.95, lum);',
+  '  col += blur * bloomAmt * 0.35 * vec3(1.0, 0.88, 0.62);',
   '',
   '  // --- Warm grade: orange tint + soft S-curve contrast. ---',
-  '  col *= vec3(1.05, 1.0, 0.94);',
-  '  col = mix(col, col * col * (3.0 - 2.0 * col), 0.12);',
+  '  // Tint kept light (1.03/1.00/0.97): the old 1.05/0.94 pushed the',
+  '  // whole dusk frame pink. S-curve a touch stronger (0.16) to cut',
+  '  // the milky mid-tone wash without crushing night shadows.',
+  '  col *= vec3(1.03, 1.0, 0.97);',
+  '  col = mix(col, col * col * (3.0 - 2.0 * col), 0.16);',
   '',
   '  // --- Vignette: darken the corners, keep the centre bright. ---',
+  '  // Gentle floor (0.78): the old 0.68 darkened the HUD corners and',
+  '  // the frame edges too hard, especially at dusk and night.',
   '  float d = distance(uv, vec2(0.5));',
-  '  float vig = smoothstep(0.85, 0.35, d);',
-  '  col *= mix(0.68, 1.0, vig);',
+  '  float vig = smoothstep(0.90, 0.42, d);',
+  '  col *= mix(0.78, 1.0, vig);',
   '',
   '  // --- sRGB encode, then a whisper of film grain. ---',
   '  col = pow(max(col, vec3(0.0)), vec3(0.4545));',
   '  float g = hash(uv * uResolution + fract(uTime) * 61.7) - 0.5;',
-  '  col += g * 0.018;',
+  '  col += g * 0.012;',
   '',
   '  gl_FragColor = vec4(col, 1.0);',
   '}',
