@@ -55,7 +55,7 @@ const PANEL_CSS = [
   // P8 — speed / altitude tapes: a moving strip of numbers down each
   // screen edge, the live value held in a glass centre band.
   '.hud-tape{position:absolute;top:50%;transform:translateY(-50%);width:66px;height:280px;overflow:hidden;pointer-events:none;z-index:4}',
-  '.hud-tape.left{left:14px}',
+  '.hud-tape.left{left:22px}', // R2-13a — was 14px: the centre band read as cut at the frame edge
   '.hud-tape.right{right:14px}',
   '.hud-tape-inner{position:absolute;left:0;top:0;width:100%;will-change:transform}',
   '.hud-tape .tape-tick{position:absolute;left:0;width:100%;text-align:center;font-size:12px;color:#ffe9c4;text-shadow:0 1px 4px rgba(0,0,0,.8);white-space:nowrap}',
@@ -86,6 +86,14 @@ const PANEL_CSS = [
   // change; any new objective or score change brings them back.
   '#hud-objective,#hud-timer-score{transition:opacity .8s ease}',
   '#hud-objective.hud-faded,#hud-timer-score.hud-faded{opacity:.38}',
+  // R2-13a — cockpit objective contrast: the glass pill was .32 alpha
+  // over a pale dusk sky and faded to .38, so "Ring 1 · 150 m" was
+  // unreadable. Darker pill + a higher fade floor for the objective
+  // only (timer/score keep the .38 whisper) + a hard shadow on the
+  // objective text itself.
+  '#hud #hud-objective{background:rgba(8,14,22,.68);border-color:rgba(255,255,255,.28)}',
+  '#hud-objective.hud-faded{opacity:.72}',
+  '#hud-objective{text-shadow:0 1px 3px rgba(0,0,0,.85)}',
   // R2-5b — TAWS radar mini-map: one small canvas, bottom-right corner.
   '#taws-map{position:absolute;right:14px;bottom:14px;width:140px;height:140px;z-index:4;pointer-events:none;border-radius:10px;border:1px solid rgba(255,255,255,.16)}',
   // R2-5b — debrief inside the end screen: trace canvas, stat grid,
@@ -378,8 +386,11 @@ export function createHud(document) {
     targetLine.id = 'hud-target';
     targetLine.style.display = 'none';
     targetLine.style.marginTop = '4px';
-    targetLine.style.color = '#ffb36b';
+    targetLine.style.color = '#ffd27a';
     targetLine.style.fontWeight = 'bold';
+    // R2-13a — hard shadow so the amber target line reads over a pale sky.
+    // Pass 2: glow tightened 12px -> 8px so the glyphs stay crisp.
+    targetLine.style.textShadow = '0 1px 4px rgba(0,0,0,.9), 0 0 8px rgba(0,0,0,.55)';
   }
 
   // ---- R2-11c — weapon line: one small line under the target line,
