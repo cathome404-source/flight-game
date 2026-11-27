@@ -826,6 +826,216 @@ function makeRunway(rw) {
   paintDigit(['a', 'b', 'c', 'd', 'e', 'f'], numX, -4.5); // "0"
   paintDigit(['a', 'b', 'c', 'd', 'f', 'g'], numX, 4.5); // "9"
 
+  // R2-12f — stylized-realistic airfield. The hangar shot's foreground
+  // was bare terrain reading murky brown and the field was open tarmac
+  // with no buildings, so: white edge lines down the strip, a
+  // cool-grey concrete apron under the parked plane (west end, where
+  // the hangar camera looks), and two low-poly hangars on the north
+  // side, sunk onto the island slope via islandHeightAt so they ground
+  // instead of floating. Runway layout and the parked-plane spot are
+  // untouched; the apron top sits 8 cm under the strip top so no
+  // coplanar faces z-fight.
+
+  // White edge lines along both strip edges.
+  for (const side of [-1, 1]) {
+    const edge = new THREE.Mesh(
+      new THREE.BoxGeometry(rw.length - 8, 0.2, 1.0),
+      lambert(PALETTE.paintWhite)
+    );
+    edge.position.set(0, 0.1, side * (rw.width / 2 - 1.2));
+    runway.add(edge);
+  }
+
+  // Concrete apron: 160 x 96 m around the parking spot (local x -180,
+  // where the plane parks at the west end). Light cool grey — the
+  // golden-hour sun warms it toward neutral, and it stays readable
+  // even under the blob shadow's brown tint (render.js, out of scope).
+  const apron = new THREE.Mesh(
+    new THREE.BoxGeometry(160, 2.5, 96),
+    lambert(0xa8b0b5)
+  );
+  apron.position.set(-185, -1.33, 0); // top at -0.08, bottom buried in the sand
+  runway.add(apron);
+
+  // Apron markings: pale perimeter line + darker expansion joints.
+  const apronMark = lambert(0xd8d5cc);
+  const jointMat = lambert(0x6e7478);
+  for (const side of [-1, 1]) {
+    const per = new THREE.Mesh(new THREE.BoxGeometry(156, 0.2, 1.0), apronMark);
+    per.position.set(-185, 0.02, side * 46);
+    runway.add(per);
+  }
+  for (const x of [-263, -107]) {
+    const per = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.2, 92), apronMark);
+    per.position.set(x, 0.02, 0);
+    runway.add(per);
+  }
+  for (const x of [-225, -185, -145]) {
+    const joint = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.2, 92), jointMat);
+    joint.position.set(x, 0.02, 0);
+    runway.add(joint);
+  }
+  for (const side of [-1, 1]) {
+    const joint = new THREE.Mesh(new THREE.BoxGeometry(156, 0.2, 0.6), jointMat);
+    joint.position.set(-185, 0.02, side * 24);
+    runway.add(joint);
+  }
+
+  // Parking stand: white box around the parked plane (local x -180),
+  // painted on the strip top where the plane actually sits.
+  const standMat = lambert(PALETTE.paintWhite);
+  for (const side of [-1, 1]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(28, 0.2, 1.0), standMat);
+    bar.position.set(-180, 0.1, side * 9);
+    runway.add(bar);
+  }
+  for (const x of [-194, -166]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.2, 18), standMat);
+    bar.position.set(x, 0.1, 0);
+    runway.add(bar);
+  }
+
+  // One low-poly hangar: concrete plinth (a retaining base on the
+  // slope), cream walls, curved slate roof, dark sliding door facing
+  // the runway (+z) with ribs, an amber header and lit windows.
+  function makeHangarBuilding(w, d, wallH, wallColor, roofColor) {
+    const g = new THREE.Group();
+    const plinth = new THREE.Mesh(
+      new THREE.BoxGeometry(w + 3, 3.9, d + 3),
+      lambert(0x7d8287)
+    );
+    plinth.position.y = 0.45; // spans -1.5..2.4: buried downhill, covers uphill
+    g.add(plinth);
+    const walls = new THREE.Mesh(
+      new THREE.BoxGeometry(w, wallH, d),
+      lambert(wallColor)
+    );
+    walls.position.y = 2.4 + wallH / 2;
+    g.add(walls);
+    // Curved roof: half-cylinder laid along x, open side down.
+    const roof = new THREE.Mesh(
+      new THREE.CylinderGeometry(d / 2, d / 2, w, 12, 1, true, 0, Math.PI),
+      lambert(roofColor, { side: THREE.DoubleSide })
+    );
+    roof.rotation.z = Math.PI / 2;
+    roof.position.y = 2.4 + wallH;
+    g.add(roof);
+    // Half-disc end caps so the arch is closed at both ends.
+    for (const end of [-1, 1]) {
+      const cap = new THREE.Mesh(
+        new THREE.CircleGeometry(d / 2, 12, 0, Math.PI),
+        lambert(roofColor, { side: THREE.DoubleSide })
+      );
+      cap.rotation.y = Math.PI / 2;
+      cap.position.set(end * (w / 2), 2.4 + wallH, 0);
+      g.add(cap);
+    }
+    // Sliding door on the runway face (+z), with ribs + amber header.
+    const door = new THREE.Mesh(
+      new THREE.BoxGeometry(w * 0.55, wallH * 0.72, 0.6),
+      lambert(0x37474f)
+    );
+    door.position.set(0, 2.4 + (wallH * 0.72) / 2, d / 2 + 0.15);
+    g.add(door);
+    for (let i = -1; i <= 1; i++) {
+      const rib = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, wallH * 0.72, 0.3),
+        lambert(0x546e7a)
+      );
+      rib.position.set(i * w * 0.16, 2.4 + (wallH * 0.72) / 2, d / 2 + 0.5);
+      g.add(rib);
+    }
+    const header = new THREE.Mesh(
+      new THREE.BoxGeometry(w * 0.55, 0.8, 0.7),
+      lambert(0xffc93c)
+    );
+    header.position.set(0, 2.4 + wallH * 0.72 + 0.4, d / 2 + 0.15);
+    g.add(header);
+    // Lit windows above the door — warm at dusk, the hangar reads occupied.
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+    for (let i = -1; i <= 1; i++) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.6, 0.3), winMat);
+      win.position.set(i * w * 0.22, 2.4 + wallH - 1.4, d / 2 + 0.15);
+      g.add(win);
+    }
+    return g;
+  }
+
+  // Sink each hangar onto the slope: group origin 0.3 m under the
+  // terrain at its centre, so the plinth grounds on both sides.
+  function placeHangar(cx, cz, w, d, wallH, wallColor, roofColor) {
+    const terrainH = islandHeightAt(WORLD.islands[0], rw.x + cx, rw.z + cz);
+    const g = makeHangarBuilding(w, d, wallH, wallColor, roofColor);
+    g.position.set(cx, terrainH - WORLD.runwayAltitude - 0.3, cz);
+    runway.add(g);
+  }
+  // Main hangar, west — big in the hangar shot's left frame.
+  // Roof slate darkened (was 0x64707e): the sun-facing slope blew
+  // white in pass 1; the darker slate still reads blue-grey in sun.
+  placeHangar(-125, -40, 44, 26, 12, 0xeadfc6, 0x4d5a68);
+  // Smaller second hangar further east, up the rise.
+  placeHangar(-15, -44, 30, 20, 9, 0xd8dcc0, 0x4d5a68);
+
+  // Apron props, kept small: fuel tank, cones, windsock, floodlights.
+  const tank = new THREE.Group();
+  const tankBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.6, 2.6, 9, 12),
+    lambert(0xf2ede4)
+  );
+  tankBody.rotation.z = Math.PI / 2;
+  tankBody.position.y = 3.7;
+  tank.add(tankBody);
+  const tankBand = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.65, 2.65, 1.2, 12),
+    lambert(0xc23b2e)
+  );
+  tankBand.rotation.z = Math.PI / 2;
+  tankBand.position.y = 3.7;
+  tank.add(tankBand);
+  for (const dx of [-3, 3]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.2, 1.2), lambert(0x3a3d42));
+    leg.position.set(dx, 0.5, 0);
+    tank.add(leg);
+  }
+  tank.position.set(-140, -0.08, 36);
+  runway.add(tank);
+
+  const coneMat = lambert(0xff7a1a);
+  for (const [cx, cz, cy] of [[-196, 12, 0.55], [-164, 12, 0.55], [-140, 30, 0.47]]) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.1, 8), coneMat);
+    cone.position.set(cx, cy, cz);
+    runway.add(cone);
+  }
+
+  // Windsock on the apron's north-east corner.
+  const sockPole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.15, 0.15, 7, 6),
+    lambert(0x3a3d42)
+  );
+  sockPole.position.set(-108, 3.42, -42);
+  runway.add(sockPole);
+  const sock = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.35, 0.9, 3.2, 8),
+    lambert(0xff7a1a)
+  );
+  sock.rotation.z = Math.PI / 2;
+  sock.position.set(-106.4, 6.7, -42);
+  runway.add(sock);
+
+  // Floodlight poles on the apron's west corners.
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
+  for (const side of [-1, 1]) {
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.15, 6, 6),
+      lambert(0x3a3d42)
+    );
+    pole.position.set(-260, 2.92, side * 44);
+    runway.add(pole);
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.0, 1.0), lampMat);
+    lamp.position.set(-260, 5.95, side * 44);
+    runway.add(lamp);
+  }
+
   return runway;
 }
 
