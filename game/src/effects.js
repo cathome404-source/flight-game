@@ -189,6 +189,54 @@ export function createEffects(scene, world) {
   }
   let burstNext = 0;
 
+  // --- Storm glow (R2-14a): the cloud itself lights up from inside
+  // when a strike fires. weather.js publishes the strike point and
+  // the live flash envelope on scene.userData; this billboard sits
+  // at the cloud base of the strike (wide soft ellipse, additive)
+  // and pulses with the same envelope, so the thunderhead flashes
+  // — not just the bolt line. The texture is procedural (a canvas
+  // radial gradient), no asset, no network. The cloud layers also
+  // get a direct colour lift below: their Lambert materials ARE lit
+  // by the weather.js flash lights, but a small material lift makes
+  // the near puffs read the flash even where the directional misses.
+  let glowTex = null;
+  let stormGlow = null;
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = 256;
+    cv.height = 256;
+    const ctx = cv.getContext('2d');
+    const grad = ctx.createRadialGradient(128, 128, 8, 128, 128, 128);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(210,225,255,0.55)');
+    grad.addColorStop(0.7, 'rgba(150,175,255,0.18)');
+    grad.addColorStop(1, 'rgba(120,150,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 256);
+    glowTex = new THREE.CanvasTexture(cv);
+    const glowMat = new THREE.MeshBasicMaterial({
+      map: glowTex,
+      color: 0xaec6ff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    stormGlow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), glowMat);
+    stormGlow.frustumCulled = false;
+    stormGlow.renderOrder = 4;
+    stormGlow.visible = false;
+    if (scene) scene.add(stormGlow);
+  } catch (e) {
+    stormGlow = null;
+  }
+  // Cloud / mist flash lift: base colours captured lazily (the
+  // layers are built by world.js; effects.js only ever writes
+  // material.color, never geometry or layout).
+  let flashMats = null;
+  let lastFlash = 0;
+
   const api = {
     inCloud: 0,
     contrailOpacity: 0,
@@ -244,6 +292,51 @@ export function createEffects(scene, world) {
       // --- Lighthouse beam sweeps slowly around its tower.
       if (world && world.lighthouseBeam) {
         world.lighthouseBeam.rotation.y += dt * 0.6;
+      }
+
+      // --- Lightning flash response (R2-14a): weather.js publishes
+      // the live flash envelope (0..~1.2) and the strike point on
+      // scene.userData. Two things happen here, in sync with the
+      // bolt ribbons and the flash lights over in weather.js:
+      // (1) the storm-glow billboard sits at the strike's cloud
+      // base and flares with the envelope; (2) the cloud layers
+      // (+ mist) lift their material colour toward cold bright
+      // blue-white, then settle back to base as the flash dies.
+      // Effects.update runs BEFORE weather.update each frame, so
+      // this reads the previous frame's envelope — invisible lag.
+      const fUd = scene && scene.userData ? scene.userData : null;
+      const flashLv = fUd ? fUd.lightningFlash || 0 : 0;
+      if (flashMats === null && world && world.cloudLayers) {
+        flashMats = [];
+        const grab = (mesh, lift) => {
+          if (!mesh || !mesh.material || !mesh.material.color) return;
+          const base = mesh.material.color.clone();
+          const fc = base.clone().multiplyScalar(lift);
+          fc.b = Math.min(1.9, fc.b * 1.3 + 0.12);
+          flashMats.push({ mat: mesh.material, base, flashCol: fc });
+        };
+        for (const layer of world.cloudLayers) grab(layer, 1.35);
+        if (world.mist) grab(world.mist, 1.2);
+      }
+      if (flashMats && (flashLv > 0.005 || lastFlash > 0.005)) {
+        const f = Math.min(1, flashLv);
+        for (const fm of flashMats) {
+          fm.mat.color.copy(fm.base).lerp(fm.flashCol, f);
+        }
+      }
+      lastFlash = flashLv;
+      if (stormGlow) {
+        const strike = fUd ? fUd.lightningStrike : null;
+        if (strike && flashLv > 0.02 && camera) {
+          stormGlow.position.set(strike.x, 270, strike.z);
+          stormGlow.lookAt(camera.position);
+          stormGlow.scale.set(430 + flashLv * 200, 260 + flashLv * 120, 1);
+          stormGlow.material.opacity = Math.min(0.6, flashLv * 0.55);
+          stormGlow.visible = true;
+        } else {
+          stormGlow.visible = false;
+          stormGlow.material.opacity = 0;
+        }
       }
 
       // --- In-cloud fog: nearest flight-line cluster decides how white
