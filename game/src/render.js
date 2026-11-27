@@ -284,10 +284,14 @@ export function createRenderer(canvas, world) {
   // plane would sit below the chase camera's frame and never be seen:
   // the ground the camera shows starts ~50 m ahead of the plane.
   const blobShadowHolder = new THREE.Group();
+  // R2-12c2: neutral dark grey, NOT the old warm dark brown #1a0e06 —
+  // the brown tint is what read as a murky mud band over the yellow
+  // touchdown zone and the red fuselage in the hangar shot (R2-12f
+  // raycast). A neutral grey at the same alpha reads as a shadow.
   const blobShadow = new THREE.Mesh(
     new THREE.CircleGeometry(1, 28),
     new THREE.MeshBasicMaterial({
-      color: 0x1a0e06,
+      color: 0x232327,
       transparent: true,
       opacity: 0,
       depthWrite: false,
@@ -309,7 +313,10 @@ export function createRenderer(canvas, world) {
   };
   // A circle cast by a low sun stretches 1/sin(elevation) along the
   // shadow direction (~5x at 11.5 deg); the offset grows 1/tan(el).
-  let shadowStretch = 1 / Math.max(0.05, Math.sin(sunEl));
+  // R2-12c2: capped at 3x — the uncapped 5-7x stretch at golden hour
+  // made a ~46 m brown band across the whole parking stand; 3x still
+  // reads as a long low-sun shadow without swallowing the plane.
+  let shadowStretch = Math.min(3, 1 / Math.max(0.05, Math.sin(sunEl)));
   let shadowTan = Math.max(0.05, Math.tan(sunEl));
   blobShadowHolder.rotation.y = -Math.atan2(shadowDir.z, shadowDir.x);
 
@@ -692,7 +699,7 @@ export function createRenderer(canvas, world) {
     sunFlat = dir;
     shadowDirLen = Math.hypot(dir.x, dir.z) || 1;
     shadowDir = { x: -dir.x / shadowDirLen, z: -dir.z / shadowDirLen };
-    shadowStretch = 1 / Math.max(0.05, Math.sin(sunEl));
+    shadowStretch = Math.min(3, 1 / Math.max(0.05, Math.sin(sunEl))); // R2-12c2 cap, see init
     shadowTan = Math.max(0.05, Math.tan(sunEl));
     // The sun-glint path on the sea fades out as night falls — and
     // as the sun climbs: a glint path only exists for a low sun, so
@@ -995,7 +1002,15 @@ export function createRenderer(canvas, world) {
         // deepened the shaded side everywhere else; the blob has to
         // keep up or the plane floats. Still below the old 0.42, so
         // it stays a softener, not a decal.
-        blobShadow.material.opacity = 0.38 * blobFade;
+        // R2-12c2: parked fade — agl is exactly 0 when parked (probed:
+        // plane y = terrain y = 4.0 at the stand), and at agl 0 the
+        // blob sits right under the plane over the yellow touchdown
+        // zone, which is what made the murky band. Fade to 0.25x on
+        // the ground and ramp to full by ~4.5 m up, so the parked
+        // plane reads clean while low flight still gets a grounding
+        // shadow (landing flare at 3 m keeps 0.75x).
+        const groundFactor = Math.min(1, 0.25 + agl / 6);
+        blobShadow.material.opacity = 0.38 * blobFade * groundFactor;
       }
 
       // Flight effects (cloud drift, in-cloud fog, contrails, wind
