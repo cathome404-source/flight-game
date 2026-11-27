@@ -419,6 +419,14 @@ export function createRenderer(canvas, world) {
   // pose flies toward the low sun, and the full glare + streak blows
   // the plane white. Shots set it <1; normal play never touches it.
   let shotGlare = 1;
+  // R2-13b: shot-only chase-distance scale (1 = normal play). The
+  // hangar shot's chase camera sits 11.2 m behind the parked plane,
+  // so the tail fin fills the frame and crops at the edge; pulling
+  // the camera back (distance only — height stays, so the view gets
+  // flatter and the tarmac fills less of the lower frame) lets the
+  // whole plane fit the open half. Set by the hangar-shot branch in
+  // main.js; normal play never touches it.
+  let shotChaseScale = 1;
   // True until the first frame (or after snap()): the camera jumps
   // straight to the active view instead of gliding across the map.
   // Headless screenshots only render a handful of frames, so without
@@ -474,7 +482,7 @@ export function createRenderer(canvas, world) {
     // H3 — closer, lower chase camera: 0.8x the distance and 0.7x the
     // height, so the plane fills more of the frame and the horizon
     // sits lower, with the mountains and sky looming above it.
-    tmpEye.copy(state.position).addScaledVector(back, camCfg.chaseDistance * 0.8);
+    tmpEye.copy(state.position).addScaledVector(back, camCfg.chaseDistance * 0.8 * shotChaseScale);
     tmpEye.y += camCfg.chaseHeight * 0.7;
     if (snapNext) {
       chaseEye.copy(tmpEye);
@@ -750,6 +758,11 @@ export function createRenderer(canvas, world) {
     // (0..1, 1 = normal). Shot-mode only; normal play never calls it.
     setShotGlare(f) {
       shotGlare = clamp(typeof f === 'number' ? f : 1, 0, 1);
+    },
+    // R2-13b: scale the chase-camera distance for a posed shot
+    // (1 = normal). Hangar-shot only; normal play never calls it.
+    setShotChaseScale(s) {
+      shotChaseScale = clamp(typeof s === 'number' ? s : 1, 1, 3);
     },
     // Day-night cycle: pin or read the game clock (hours, 0..24)
     // and how night it is (0 = day, 1 = full night).

@@ -712,7 +712,19 @@ if (shots.shotName === 'hangar') {
   // the whole left edge (cropped left + bottom) and hid the fuselage
   // behind it — worse than try 1. Try 1's dy +30 stands as the best
   // hangar frame; the remaining yellow is pale noon paint, not olive.
-  if (render && typeof render.addLook === 'function') render.addLook(-120, 30);
+  // R2-13b FINAL: try 3 FAILED (a) — at the +71.6 deg clamp the
+  // plane slides off the left edge (only the tail cone + a wing
+  // sliver stay in frame); the lookAt target sits 16 m east of the
+  // plane, so the max orbit over-swings it. Revert to try 1's
+  // working angles (+55 deg, dy 0) with scale 1.75 — the midpoint
+  // between try 1 (whole but small at 2.0) and try 2's distance
+  // (1.5, whose failure was dy, not scale). Lower-half colour
+  // measured: baseline (171,158,140) -> try 1 (150,146,135), i.e.
+  // the side-on view already pulls the yellow cast toward neutral
+  // grey; the remaining pale-cream extent is the paint itself,
+  // which is gameplay and stays.
+  if (render && typeof render.setShotChaseScale === 'function') render.setShotChaseScale(1.75);
+  if (render && typeof render.addLook === 'function') render.addLook(-220, 0);
   if (hangar && typeof hangar.compactForShot === 'function') hangar.compactForShot();
   const hp = document.querySelector('.hangar-panel');
   if (hp) hp.scrollTop = 0;
