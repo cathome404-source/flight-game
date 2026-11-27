@@ -698,15 +698,21 @@ if (shots.shotName === 'hangar') {
   const hangarScreen = document.getElementById('screen-hangar');
   if (hangarScreen) hangarScreen.style.flexDirection = 'row';
   render.snap();
-  // addLook(dx, dy): lookYaw -= dx * 0.25 deg, so dx -88 orbits the
-  // camera +22 deg around the plane and swings the plane left in
-  // frame, into the open half; dy +30 tips the camera up a touch so
-  // the plane sits higher in the frame. (Try 1 used +35 deg: the
-  // tail filled the frame, the nose slid behind the panel and the
-  // tail fin cropped at the left edge — the parked plane is too long
-  // for the 700 px open half at that angle. +22 deg foreshortens the
-  // fuselage so the whole plane fits.)
-  if (render && typeof render.addLook === 'function') render.addLook(-88, 30);
+  // addLook(dx, dy): lookYaw -= dx * 0.25 deg, so dx -120 orbits the
+  // camera +30 deg around the plane and swings the plane left in
+  // frame, into the open half. (Try 1 used +35 deg: the tail filled
+  // the frame, the nose slid behind the panel and the tail fin cropped
+  // at the left edge — the parked plane is too long for the 700 px
+  // open half at that angle. +22 deg foreshortens the fuselage so
+  // the whole plane fits.) R2-12h try 1: +30 deg — the middle step
+  // between the +22 deg slab (fuselage unreadable, R2-12g) and the
+  // +35 deg crop, so the fuselage + nose read as a plane while the
+  // whole aircraft still fits the open half. R2-12h try 2 (dy -40)
+  // REVERTED: it lifted the plane but the tail fin ballooned to fill
+  // the whole left edge (cropped left + bottom) and hid the fuselage
+  // behind it — worse than try 1. Try 1's dy +30 stands as the best
+  // hangar frame; the remaining yellow is pale noon paint, not olive.
+  if (render && typeof render.addLook === 'function') render.addLook(-120, 30);
   if (hangar && typeof hangar.compactForShot === 'function') hangar.compactForShot();
   const hp = document.querySelector('.hangar-panel');
   if (hp) hp.scrollTop = 0;

@@ -612,7 +612,20 @@ export function createRenderer(canvas, world) {
       // weights left a pink dusk band under the storm.
       // R2-11g: harder still (0.95/0.95) — the R2-10 frame still
       // read as grey-blue dusk with cream clouds, not a storm.
-      horizon.lerp(new THREE.Color(0x4a5568), storm * 0.95);
+      // R2-12h: darker storm horizon target (0x2e3644, was 0x4a5568
+      // slate) — at 21:00 the sky top already read navy (52,61,73)
+      // but the horizon band stayed pale grey (141,138,137, R2-12g),
+      // because the slate target + the warm haze lift in
+      // paintSkyDome kept it light. The darker target also cuts the
+      // haze (hazeAmt scales with horizon brightness), so the band
+      // darkens twice over. Storm branch only; clear weather untouched.
+      // MEASURED (R2-12h, boss 21:00): sky top 58→50, horizon band
+      // 144→122 — the sky darkened, but the band's remainder is the
+      // pale SEA surface below the horizon line (157,160,157, moves
+      // with neither this grade nor the storm fog), i.e. the world.js
+      // sea shader, out of this session's scope. Do not chase the
+      // last grey from this branch.
+      horizon.lerp(new THREE.Color(0x2e3644), storm * 0.95);
       zenith.lerp(new THREE.Color(0x1a2233), storm * 0.95);
       // R2-11g: the sun dim alone did not darken the scene — the
       // hemisphere + ambient fill kept terrain, clouds and the

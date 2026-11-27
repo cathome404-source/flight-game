@@ -75,18 +75,22 @@ export function createShots(render, flight, world, missions) {
     const ringZ = WORLD.rings[0].z;
 
     if (name === 'cover') {
-      // H3 — dramatic cover: ~300 m short of ring 2 (620, 80, -120)
-      // over open sea east of Garuda, heading NNW (yaw 26) so the
-      // low WSW sun sits ~75 deg off the nose — out of frame —
-      // instead of dead ahead blowing the plane white. Try 1
-      // (eastbound on the ring line, -230/330) failed: ring 1 sits
-      // over the Garuda island cone, so the frame was land + a wall
-      // of cream cloud, not sea. This pose keeps the old frame's
-      // money (open sea below, sunlit tail, volcano ahead) with the
-      // ring now BIG ahead and Merapi Kecil looming beyond it.
+      // H3 — dramatic cover: ring 2 (620, 80, -120) approached from
+      // the WEST, heading east (yaw -90), 100 m short at y 72 — 8 m
+      // under the ring centre so the big gold torus sits just above
+      // the plane instead of swallowing it. The rings are NOT
+      // north-facing: makeRing rotates each ring by atan2(x, z), so
+      // ring 2's axis is (0.98, -0.19) — it faces east/west. Try 1
+      // (south approach, yaw 0) proved it: the hero ring rendered a
+      // thin white edge-on ellipse, 79 deg off its axis. From the
+      // west the view is 11 deg off the axis — face-on — and the low
+      // WSW sun sits behind the camera, lighting the gold tube's
+      // camera face instead of blowing the plane white. Merapi Kecil
+      // looms ahead right, open sea beyond the ring. Heading stays
+      // 90 (east), which pose() already sets.
       // Throttle 0.7 keeps the afterburner off; shot glare 0.15.
       startForShot(1, 'free');
-      pose(750, 90, 150, 26, 0, 70, 0.7, 0);
+      pose(520, 72, -120, -90, 0, 70, 0.7, 0);
       render.setView('chase');
       if (render && typeof render.setShotGlare === 'function') render.setShotGlare(0.15);
     } else if (name === 'cockpit') {

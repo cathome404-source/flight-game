@@ -336,7 +336,17 @@ export function createWeather(scene) {
     },
   };
 
-  const STORM_FOG = new THREE.Color(0x3a4250);
+  // R2-12h: darker storm fog (0x232c38, was 0x3a4250 slate) — the
+  // storm horizon band at 21:00 stayed pale grey (111,114,107) even
+  // after the sky-dome horizon itself darkened, because the band is
+  // fog-faded sea, not sky: the sea fades to this colour at range.
+  // The near field (plane, drone, rings) sits inside fog.near and is
+  // untouched; only the distant sea/horizon darkens.
+  // MEASURED (R2-12h, boss 21:00): band 111→108 — no measurable
+  // move. The band is the sea SHADER's own brightness, not the fog
+  // colour, so this value is kept (harmless, storm-only) but the
+  // residual pale sea is a world.js matter, not a fog matter.
+  const STORM_FOG = new THREE.Color(0x232c38);
 
   // Last known plane position + forward vector (refreshed by
   // update): the strike point is picked ahead of the plane from these.
