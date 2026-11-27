@@ -19,7 +19,7 @@ The raw downloads are too big to vendor (1K HDRIs are ~1.2–1.5 MiB each,
 - Textures: raw 1K JPGs downscaled to **512×512 JPEG q75** (~42–63 KiB).
   The 1K originals are NOT in the repo.
 
-Total: 6 files, ~357 KiB. The game loads nothing from the network at
+Total: 8 files, ~396 KiB. The game loads nothing from the network at
 runtime — every file below is local under `game/assets/`.
 
 ## Environment maps (sky HDRIs → PMREM, wired in `src/envmap.js`)
@@ -38,6 +38,21 @@ runtime — every file below is local under `game/assets/`.
 | `sand.jpg` | [coast_sand_01](https://polyhaven.com/a/coast_sand_01) — diffuse colour map | CC0 | 47,687 B | Beach-rim cylinders, tiled 6× |
 | `asphalt.jpg` | [worn_asphalt](https://polyhaven.com/a/worn_asphalt) — diffuse colour map | CC0 | 41,691 B | Runway strip top, tiled 10× along the strip |
 
+## Terrain blend textures (R2-14b, wired in `src/world.js`, `loadTerrainBlendTextures` + shader blend in `makeReliefTerrain`)
+
+Blended over the terrain relief mesh by slope and height (not by
+vertex colour alone): rock on steep slopes and bare peaks, dirt on
+eroded mid-slopes, sand on the low beach band — grass stays the base.
+The blend only activates once all three textures are loaded
+(`uTexReady`); a failed load falls back to grass + vertex colours.
+
+| File | Poly Haven asset | License | Vendored size | Used as |
+|---|---|---|---|---|
+| `rock.jpg` | [dark_rock](https://polyhaven.com/a/dark_rock) — diffuse colour map | CC0 | 20,776 B | Steep slopes + high peaks, tiled 12× (vTerrUv × 12) |
+| `dirt.jpg` | [dirt](https://polyhaven.com/a/dirt) — diffuse colour map | CC0 | 28,698 B | Eroded mid-slopes, tiled 12× (vTerrUv × 12) |
+| `sand.jpg` | [coast_sand_01](https://polyhaven.com/a/coast_sand_01) — diffuse colour map | CC0 | 47,687 B | Also reused as the low beach-band blend on the terrain mesh, tiled 6× (vTerrUv × 6) |
+
+
 ## What was considered and cut (budget / style)
 
 - **Models: none taken.** Poly Haven models are realistic high-poly
@@ -52,5 +67,8 @@ runtime — every file below is local under `game/assets/`.
 - **More textures cut:** `aerial_beach_01`, `rocky_terrain`,
   `aerial_grass_rock` — the three chosen textures cover the three
   surfaces the camera actually rests on (grass, sand, asphalt).
+  R2-14b later added `dark_rock` + `dirt` as terrain blend maps
+  (steep-slope rock, eroded-slope dirt) because the slope/height
+  blend needs them; no further textures were needed.
 - **Raw files cut:** all six `.hdr` / 1K-JPG originals (~7.3 MiB total)
   were downloaded to `/tmp` only, converted, and never vendored.

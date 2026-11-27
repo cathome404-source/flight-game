@@ -82,7 +82,26 @@ function fbmRelief(x, z, seed) {
     valueNoise(x * 0.0045, z * 0.0045, seed) * 0.5 +
     valueNoise(x * 0.009, z * 0.009, seed + 13) * 0.28 +
     valueNoise(x * 0.018, z * 0.018, seed + 29) * 0.14 +
-    valueNoise(x * 0.036, z * 0.036, seed + 47) * 0.08
+    valueNoise(x * 0.036, z * 0.036, seed + 47) * 0.08 +
+    valueNoise(x * 0.072, z * 0.072, seed + 61) * 0.04
+  ) / 1.04;
+}
+
+// R2-14b: ridged multifractal — sharp crests with soft valleys, the
+// shape real mountain ridges have (a plain fbm only makes rolling
+// swells). One ridge octave is folded value noise; three octaves
+// stack it at ~220 / ~110 / ~55 m.
+function ridgeNoise(x, z, seed) {
+  const v = valueNoise(x, z, seed);
+  const r = 1 - Math.abs(2 * v - 1);
+  return r * r;
+}
+
+function fbmRidge(x, z, seed) {
+  return (
+    ridgeNoise(x * 0.0045, z * 0.0045, seed) * 0.55 +
+    ridgeNoise(x * 0.009, z * 0.009, seed + 17) * 0.30 +
+    ridgeNoise(x * 0.018, z * 0.018, seed + 31) * 0.15
   );
 }
 
@@ -105,8 +124,32 @@ function islandHeightAt(def, lx, lz) {
   if (t >= 1) return -1;
   const relief = (WORLD.terrain && WORLD.terrain.relief) || 0.45;
   const seed = def.x * 0.37 + def.z * 0.61;
-  const n = fbmRelief(lx + def.x, lz + def.z, seed);
+  let n = fbmRelief(lx + def.x, lz + def.z, seed);
+  // R2-14b: ridged crests blended into the rolling noise — strong on
+  // the tall volcanic island (sharp mountain ridges), a whisper on
+  // the low islands (rolling hills keep their soft shape). Both
+  // noises live in [0, 1], so the blend never exceeds the cone.
+  const ridgeMix = def.height >= 120 ? 0.55 : 0.18;
+  n = n * (1 - ridgeMix) + fbmRidge(lx + def.x, lz + def.z, seed + 7) * ridgeMix;
   let h = def.height * (1 - t) * (1 - relief + relief * n);
+  // R2-14b: terraced benches on the upper slopes — real mountains
+  // step, they do not slide in one smooth cone. The stepped height
+  // is provably <= the smooth height (the step curve sits under the
+  // diagonal), so the visual terrain never pokes above the physics
+  // cone in flight.js and no ring / landing line moves.
+  const tf = h / def.height;
+  if (tf > 0.2) {
+    const steps = 7;
+    const f = tf * steps;
+    const fl = Math.floor(f);
+    const fr = f - fl;
+    const stepped = ((fl + smooth01((fr - 0.55) / 0.45)) / steps) * def.height;
+    // Clamp: the smoothstep riser overshoots the diagonal by up to
+    // 0.25% near the top of a step — without this the visual crest
+    // could poke ~0.5 m above the physics cone on Merapi Kecil.
+    const steppedClamped = Math.min(stepped, h);
+    h = h + (steppedClamped - h) * smooth01((tf - 0.2) / 0.15);
+  }
   // Crater dip: the volcanic peak sags a little at the very top.
   if (def.height > 120 && t < 0.1) {
     h *= 0.82 + 0.18 * (t / 0.1);
@@ -116,7 +159,21 @@ function islandHeightAt(def, lx, lz) {
   if (t > rim) {
     h *= 1 - smooth01((t - rim) / (1 - rim)) * 0.85;
   }
-  return Math.max(h, 2.05);
+  h = Math.max(h, 2.05);
+  // R2-14b: runway flatten — within 60 m of the runway rect the
+  // relief is pressed back to the beach floor, so the strip, apron
+  // and hangar plinths (all probed via islandHeightAt) sit on flat
+  // ground exactly as before. Landing / parking are untouched.
+  const rw = WORLD.runway;
+  const wx = lx + def.x;
+  const wz = lz + def.z;
+  const dx = Math.max(Math.abs(wx - rw.x) - rw.length / 2, 0);
+  const dz = Math.max(Math.abs(wz - rw.z) - rw.width / 2, 0);
+  const rd = Math.sqrt(dx * dx + dz * dz);
+  if (rd < 60) {
+    h = h + (Math.min(h, 2.05) - h) * (1 - smooth01(rd / 60));
+  }
+  return h;
 }
 
 // Colour of one terrain vertex: sand low by the beach, light then
@@ -172,7 +229,10 @@ function terrainVertexColor(def, h, slope, jitter, patch, out) {
 // part of the ground now, not cones stuck on top of it.
 function makeReliefTerrain(def) {
   const R = def.radius;
-  const SEG = 56;
+  // R2-14b: 56 -> 80 segments — the ridged + terraced heightmap
+  // needs a denser grid or the benches alias into stairstep facets.
+  // 81x81 verts per island; the build stays a one-time load cost.
+  const SEG = 80;
   const size = R * 2;
   const geo = new THREE.PlaneGeometry(size, size, SEG, SEG);
   geo.rotateX(-Math.PI / 2);
@@ -206,15 +266,78 @@ function makeReliefTerrain(def) {
   // keep the relief readable without the striping. A small negative
   // polygon offset lets the terrain win where it meets the beach rim.
   geo.computeVertexNormals();
-  const mesh = new THREE.Mesh(
-    geo,
-    lambert(0xffffff, {
-      vertexColors: true,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
-    })
-  );
+  const mat = lambert(0xffffff, {
+    vertexColors: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  // R2-14b: slope/height texture blending — rock on steep slopes and
+  // bare peaks, dirt on eroded mid-slopes, sand on the low beach band,
+  // grass everywhere else. Injected into the Lambert shader so the
+  // blend follows the real displaced surface (vTerrSlope from the
+  // computed normals, vTerrH from the displaced height), not the
+  // vertex colours. The base map is still the CC0 grass from
+  // applySurfaceTextures; rock/dirt/sand are sampled as extra maps
+  // and mixed over it. Guarded by #ifdef USE_MAP: before the grass
+  // map loads, the terrain renders vertex colours only and the
+  // shader still compiles. A missing blend texture leaves its
+  // uniform black and the mix weight harmless (weight 0 where the
+  // texture is absent — see loadTerrainBlendTextures).
+  const blendUniforms = {
+    uRockTex: { value: null },
+    uDirtTex: { value: null },
+    uSandTex: { value: null },
+    uPeakH: { value: def.height },
+    uTexReady: { value: 0 },
+  };
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, blendUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying float vTerrSlope;\nvarying float vTerrH;\nvarying vec2 vTerrUv;'
+      )
+      .replace(
+        '#include <beginnormal_vertex>',
+        '#include <beginnormal_vertex>\nvTerrSlope = 1.0 - clamp(objectNormal.y, 0.0, 1.0);'
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvTerrH = transformed.y;\nvTerrUv = uv;'
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying float vTerrSlope;\nvarying float vTerrH;\nvarying vec2 vTerrUv;\nuniform sampler2D uRockTex;\nuniform sampler2D uDirtTex;\nuniform sampler2D uSandTex;\nuniform float uPeakH;\nuniform float uTexReady;'
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+#ifdef USE_MAP
+        if (uTexReady > 0.5) {
+          // vTerrUv is the raw 0..1 island UV; the grass map repeats
+          // 18x via its own repeat, so the blend textures scale
+          // against the same base: rock/dirt 12x, sand 6x.
+          float sandW = 1.0 - smoothstep(2.5, 5.5, vTerrH);
+          float rockW = smoothstep(0.42, 0.72, vTerrSlope);
+          rockW = max(rockW, smoothstep(0.72, 0.88, vTerrH / max(1.0, uPeakH)) * 0.85);
+          float dirtW = smoothstep(0.30, 0.45, vTerrSlope) * (1.0 - smoothstep(0.45, 0.65, vTerrSlope));
+          dirtW *= 0.7 * (1.0 - sandW);
+          vec3 blendCol = sampledDiffuseColor.rgb;
+          vec3 sandC = texture2D(uSandTex, vTerrUv * 6.0).rgb;
+          vec3 dirtC = texture2D(uDirtTex, vTerrUv * 12.0).rgb;
+          vec3 rockC = texture2D(uRockTex, vTerrUv * 12.0).rgb;
+          blendCol = mix(blendCol, sandC, sandW);
+          blendCol = mix(blendCol, dirtC, dirtW);
+          blendCol = mix(blendCol, rockC, rockW);
+          sampledDiffuseColor.rgb = blendCol;
+        }
+#endif`
+      );
+  };
+  loadTerrainBlendTextures(blendUniforms);
+  const mesh = new THREE.Mesh(geo, mat);
   mesh.position.y = 0;
   // R2-4b: tagged so applySurfaceTextures can lay the CC0 grass
   // texture over the vertex colours (map * vertex colour).
@@ -2079,6 +2202,40 @@ const SURFACE_TEXTURES = {
   sand: { file: 'assets/sand.jpg', repeat: [6, 6] },
   asphalt: { file: 'assets/asphalt.jpg', repeat: [10, 1] },
 };
+
+// R2-14b: loads the three blend textures for one terrain material
+// (rock/dirt/sand, CC0 — see game/assets/SOURCES.md) into its
+// shader uniforms. uTexReady flips to 1 only when all three are in,
+// so the shader never samples an unbound texture unit. A failed load
+// leaves the weight at 0 for that texture (its uniform stays null
+// and uTexReady stays 0), so the terrain falls back to grass +
+// vertex colours instead of breaking.
+function loadTerrainBlendTextures(blendUniforms) {
+  const loader = new THREE.TextureLoader();
+  const specs = [
+    ['uRockTex', 'assets/rock.jpg'],
+    ['uDirtTex', 'assets/dirt.jpg'],
+    ['uSandTex', 'assets/sand.jpg'],
+  ];
+  let loaded = 0;
+  for (const [key, file] of specs) {
+    loader.load(
+      file,
+      (tex) => {
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        if ('encoding' in tex && THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
+        blendUniforms[key].value = tex;
+        loaded += 1;
+        if (loaded >= specs.length) blendUniforms.uTexReady.value = 1;
+      },
+      undefined,
+      () => {
+        // Keep uTexReady at 0: blend stays off, vertex colours rule.
+      }
+    );
+  }
+}
 
 function applySurfaceTextures(group) {
   const loader = new THREE.TextureLoader();
